@@ -1,0 +1,2652 @@
+--Obzervable hub
+local Players    = game:GetService("Players")
+local UIS        = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Lighting   = game:GetService("Lighting")
+local Workspace  = game:GetService("Workspace")
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Forward-declare WindUI so every callback defined before the library loads
+-- captures the same upvalue rather than falling through to a nil global.
+local WindUI
+
+local player = Players.LocalPlayer
+repeat task.wait() until player and player:FindFirstChild("PlayerGui")
+
+local boostPower       = 72
+local maxBoost         = 750
+local walkSpeed        = 21
+local maxWalkSpeed     = 500
+local gravityValue     = 196
+local gravityMax       = 300
+local noclipEnabled    = false
+local potatoEnabled    = false
+local pullVecEnabled   = false
+local pullVecHeld      = false
+local pullVecStrength  = 120
+local pullVecSmooth    = 0.15
+local cfMagsEnabled    = false
+local orbMagsEnabled   = false
+local magsHeld         = false
+local glovesEnabled      = false
+local gloveSize          = 6
+local glovesInvisible    = false
+local originalHandSizes  = {}
+
+local orbEnabled       = false
+local orbRadius        = 20
+local orbColor         = Color3.fromRGB(0, 140, 255)
+local orbTransparency  = 0.6
+local orbPart          = nil
+local cachedBall       = nil
+local ballSearchTimer  = 0
+local noclipTimer      = 0
+
+-- ── Ball Manipulation ─────────────────────────────────────────────────────────
+local ballMagEnabled   = false
+local ballRangeEnabled = false
+local ballMagRange     = 50
+local ballSpeedRange   = 25
+local ballBoostedSpeed = 999
+local ballDefaultSpeed = 95
+local ballPullStrength = 110
+local ballJitterAmp    = 14
+local ballJitterFreq   = 22
+local ballSnapDist     = 1.5
+local footballSpeed    = nil
+-- ─────────────────────────────────────────────────────────────────────────────
+local stickyHeadEnabled      = false
+local stickyHeadSize         = 35
+local stickyHeadZones        = {}
+local stickyHeadNotifs       = true
+local rotationSmoothness     = 0.08
+local airControlSmoothing    = 0.16
+local stickyPullStrength     = 2.0
+local stickyStickiness       = 2.0
+local rocketSpeed      = 9999
+local rocketDuration   = 0.5
+local rocketActive     = false
+local rocketCooldown   = false
+local divePower        = 50
+local walkSpeedLock    = true
+-- ── Wager features ───────────────────────────────────────────────────────────
+local headManipEnabled = false
+local headStrength     = 2.0
+local jumpPullEnabled  = false
+local jumpPullActive   = false
+-- ─────────────────────────────────────────────────────────────────────────────
+
+local char = player.Character or player.CharacterAdded:Wait()
+local hrp  = char:WaitForChild("HumanoidRootPart")
+local hum  = char:WaitForChild("Humanoid")
+
+player.CharacterAdded:Connect(function(c)
+	char = c
+	hrp  = c:WaitForChild("HumanoidRootPart")
+	hum  = c:WaitForChild("Humanoid")
+	hum.WalkSpeed = walkSpeed
+	if noclipEnabled then
+		for _, p in pairs(c:GetDescendants()) do
+			if p:IsA("BasePart") then p.CanCollide = false end
+		end
+	end
+end)
+
+local originalProps = {}
+
+local function applyPotato()
+	originalProps.QualityLevel             = settings().Rendering.QualityLevel
+	originalProps.Ambient                  = Lighting.Ambient
+	originalProps.Brightness               = Lighting.Brightness
+	originalProps.GlobalShadows            = Lighting.GlobalShadows
+	originalProps.FogEnd                   = Lighting.FogEnd
+	originalProps.FogStart                 = Lighting.FogStart
+	originalProps.ClockTime                = Lighting.ClockTime
+	originalProps.ShadowSoftness           = Lighting.ShadowSoftness
+	originalProps.EnvironmentDiffuseScale  = Lighting.EnvironmentDiffuseScale
+	originalProps.EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale
+
+	Lighting.Ambient                  = Color3.fromRGB(255, 255, 255)
+	Lighting.Brightness               = 0.8
+	Lighting.GlobalShadows            = false
+	Lighting.FogEnd                   = 9e9
+	Lighting.FogStart                 = 9e9
+	Lighting.ShadowSoftness           = 0
+	Lighting.ClockTime                = 14
+	Lighting.EnvironmentDiffuseScale  = 0
+	Lighting.EnvironmentSpecularScale = 0
+
+	for _, effect in pairs(Lighting:GetChildren()) do
+		if effect:IsA("Atmosphere") or effect:IsA("Sky")
+			or effect:IsA("BlurEffect") or effect:IsA("SunRaysEffect")
+			or effect:IsA("ColorCorrectionEffect") or effect:IsA("DepthOfFieldEffect")
+			or effect:IsA("BloomEffect") then
+			effect:Destroy()
+		end
+	end
+
+	settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+
+	for _, obj in pairs(Workspace:GetDescendants()) do
+		local t = obj.ClassName
+		if t == "ParticleEmitter" or t == "Trail" or t == "Beam"
+			or t == "Fire" or t == "Smoke" or t == "Sparkles"
+			or t == "Texture" then
+			obj:Destroy()
+		end
+	end
+
+	if char then
+		for _, obj in pairs(char:GetDescendants()) do
+			local t = obj.ClassName
+			if t == "ParticleEmitter" or t == "Trail" or t == "Beam"
+				or t == "Fire" or t == "Smoke" or t == "Sparkles" then
+				obj:Destroy()
+			end
+		end
+	end
+end
+
+local function removePotato()
+	if originalProps.Ambient then
+		settings().Rendering.QualityLevel    = originalProps.QualityLevel or Enum.QualityLevel.Automatic
+		Lighting.EnvironmentDiffuseScale      = originalProps.EnvironmentDiffuseScale  or 1
+		Lighting.EnvironmentSpecularScale     = originalProps.EnvironmentSpecularScale or 1
+		Lighting.Ambient                      = originalProps.Ambient
+		Lighting.Brightness                   = originalProps.Brightness
+		Lighting.GlobalShadows                = originalProps.GlobalShadows
+		Lighting.FogEnd                       = originalProps.FogEnd
+		Lighting.ShadowSoftness               = originalProps.ShadowSoftness or 0.5
+		Lighting.ClockTime                    = originalProps.ClockTime or 14
+	end
+end
+
+-- ── Sky Presets ───────────────────────────────────────────────────────────────
+local originalLighting = {
+	Brightness           = Lighting.Brightness,
+	Ambient              = Lighting.Ambient,
+	OutdoorAmbient       = Lighting.OutdoorAmbient,
+	FogEnd               = Lighting.FogEnd,
+	FogColor             = Lighting.FogColor,
+	ClockTime            = Lighting.ClockTime,
+	ExposureCompensation = Lighting.ExposureCompensation,
+}
+local currentSkyPreset = "Default"
+
+local function cleanSkyEffects()
+	for _, obj in pairs(Lighting:GetChildren()) do
+		if obj.Name == "Inferno_Sky" or obj.Name == "Inferno_Effect" then
+			obj:Destroy()
+		end
+	end
+end
+
+local SKY_BK = "http://www.roblox.com/asset/?id=2670643365"
+
+local function makeSky(stars)
+	local sky = Instance.new("Sky")
+	sky.Name = "Inferno_Sky"
+	sky.SkyboxBk = SKY_BK; sky.SkyboxDn = SKY_BK; sky.SkyboxFt = SKY_BK
+	sky.SkyboxLf = SKY_BK; sky.SkyboxRt = SKY_BK; sky.SkyboxUp = SKY_BK
+	sky.StarCount = stars or 0
+	sky.Parent    = Lighting
+	return sky
+end
+
+local function makeCC(tint, brightness, saturation)
+	local cc = Instance.new("ColorCorrectionEffect")
+	cc.Name       = "Inferno_Effect"
+	cc.TintColor  = tint
+	cc.Brightness = brightness or 0
+	cc.Saturation = saturation or 0
+	cc.Parent     = Lighting
+end
+
+local function makeBloom(intensity, size, threshold)
+	local b = Instance.new("BloomEffect")
+	b.Name      = "Inferno_Effect"
+	b.Intensity = intensity
+	b.Size      = size
+	b.Threshold = threshold
+	b.Parent    = Lighting
+end
+
+local function makeSunRays(intensity, spread)
+	local s = Instance.new("SunRaysEffect")
+	s.Name      = "Inferno_Effect"
+	s.Intensity = intensity
+	s.Spread    = spread
+	s.Parent    = Lighting
+end
+
+local function ApplySky(preset)
+	currentSkyPreset = preset
+	cleanSkyEffects()
+	task.wait(0.05)
+
+	if preset == "Default" then
+		Lighting.Brightness           = originalLighting.Brightness
+		Lighting.Ambient              = originalLighting.Ambient
+		Lighting.OutdoorAmbient       = originalLighting.OutdoorAmbient
+		Lighting.FogEnd               = originalLighting.FogEnd
+		Lighting.ClockTime            = originalLighting.ClockTime
+		Lighting.ExposureCompensation = originalLighting.ExposureCompensation
+
+	elseif preset == "Sunset Paradise" then
+		Lighting.Brightness = 2.5; Lighting.ClockTime = 18.5; Lighting.FogEnd = 100000
+		Lighting.Ambient = Color3.fromRGB(255, 140, 70); Lighting.OutdoorAmbient = Color3.fromRGB(255, 160, 100)
+		makeSky(1000); makeSunRays(0.15, 0.6); makeBloom(0.6, 24, 0.8)
+
+	elseif preset == "Golden Hour" then
+		Lighting.Brightness = 3; Lighting.ClockTime = 17; Lighting.FogEnd = 100000
+		Lighting.Ambient = Color3.fromRGB(255, 200, 120); Lighting.OutdoorAmbient = Color3.fromRGB(255, 180, 100)
+		local sky = makeSky(0); sky.SunAngularSize = 18
+		makeCC(Color3.fromRGB(255, 220, 180), 0.1, 0.2)
+
+	elseif preset == "Warm Summer" then
+		Lighting.Brightness = 2.8; Lighting.ClockTime = 14; Lighting.FogEnd = 100000
+		Lighting.Ambient = Color3.fromRGB(255, 220, 180); Lighting.OutdoorAmbient = Color3.fromRGB(255, 200, 150)
+		makeSky(0); makeSunRays(0.12, 0.5)
+
+	elseif preset == "Pink Dream" then
+		Lighting.Brightness = 2.5; Lighting.ClockTime = 17.5; Lighting.FogEnd = 100000
+		Lighting.Ambient = Color3.fromRGB(255, 180, 220); Lighting.OutdoorAmbient = Color3.fromRGB(255, 150, 200)
+		makeSky(2000); makeCC(Color3.fromRGB(255, 200, 220), 0.05, 0.2)
+
+	elseif preset == "Orange Glow" then
+		Lighting.Brightness = 2.6; Lighting.ClockTime = 18; Lighting.FogEnd = 100000
+		Lighting.Ambient = Color3.fromRGB(255, 180, 100); Lighting.OutdoorAmbient = Color3.fromRGB(255, 160, 80)
+		makeSky(0); makeBloom(0.5, 28, 0.7)
+
+	elseif preset == "Coral Sunset" then
+		Lighting.Brightness = 2.7; Lighting.ClockTime = 19; Lighting.FogEnd = 100000
+		Lighting.Ambient = Color3.fromRGB(255, 140, 140); Lighting.OutdoorAmbient = Color3.fromRGB(255, 120, 120)
+		makeSky(0); makeCC(Color3.fromRGB(255, 180, 180), 0.08, 0.25)
+
+	elseif preset == "Clear Day" then
+		Lighting.Brightness = 3; Lighting.ClockTime = 14; Lighting.FogEnd = 100000
+		Lighting.Ambient = Color3.fromRGB(200, 200, 200); Lighting.OutdoorAmbient = Color3.fromRGB(180, 180, 180)
+		makeSunRays(0.1, 0.5)
+
+	elseif preset == "Vaporwave Dream" then
+		Lighting.Brightness = 2.2; Lighting.ClockTime = 16; Lighting.FogEnd = 100000
+		Lighting.Ambient = Color3.fromRGB(255, 150, 255); Lighting.OutdoorAmbient = Color3.fromRGB(200, 120, 200)
+		makeSky(3000); makeCC(Color3.fromRGB(255, 180, 255), 0.05, 0.4)
+
+	elseif preset == "Midnight Blue" then
+		Lighting.Brightness = 1.2; Lighting.ClockTime = 0; Lighting.FogEnd = 100000
+		Lighting.Ambient = Color3.fromRGB(80, 80, 140); Lighting.OutdoorAmbient = Color3.fromRGB(60, 60, 120)
+		local sky = Instance.new("Sky")
+		sky.Name = "Inferno_Sky"
+		sky.SkyboxBk = "http://www.roblox.com/asset/?id=159454299"
+		sky.SkyboxDn = "http://www.roblox.com/asset/?id=159454296"
+		sky.SkyboxFt = "http://www.roblox.com/asset/?id=159454293"
+		sky.SkyboxLf = "http://www.roblox.com/asset/?id=159454286"
+		sky.SkyboxRt = "http://www.roblox.com/asset/?id=159454300"
+		sky.SkyboxUp = "http://www.roblox.com/asset/?id=159454288"
+		sky.StarCount = 5000; sky.Parent = Lighting
+		makeBloom(0.8, 24, 0.8)
+	end
+end
+
+local skyLoopEnabled = false
+local skyLoopIndex   = 1
+local SKY_LOOP_LIST  = {
+	"Sunset Paradise", "Golden Hour", "Warm Summer", "Pink Dream",
+	"Orange Glow", "Coral Sunset", "Clear Day", "Vaporwave Dream", "Midnight Blue",
+}
+
+-- Re-apply / cycle skies every second
+task.spawn(function()
+	while task.wait(1) do
+		if skyLoopEnabled then
+			ApplySky(SKY_LOOP_LIST[skyLoopIndex])
+			skyLoopIndex = skyLoopIndex % #SKY_LOOP_LIST + 1
+		elseif currentSkyPreset ~= "Default" then
+			if not Lighting:FindFirstChild("Inferno_Sky") then
+				ApplySky(currentSkyPreset)
+			end
+		end
+	end
+end)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+local function clipEnhanceObj(obj)
+	if not potatoEnabled then return end
+	local t = obj.ClassName
+	if t == "ParticleEmitter" or t == "Trail" or t == "Beam"
+		or t == "Fire" or t == "Smoke" or t == "Sparkles"
+		or t == "Texture" then
+		obj:Destroy()
+	end
+end
+workspace.DescendantAdded:Connect(function(obj)
+	task.defer(function() clipEnhanceObj(obj) end)
+end)
+
+-- Scans workspace for the nearest Football — called at most every 0.3 s
+local function refreshBallCache()
+	local nearest, nearestDist = nil, math.huge
+	if not hrp then return end
+	for _, obj in pairs(workspace:GetDescendants()) do
+		if obj.Name == "Football" and obj:IsA("BasePart") then
+			local dist = (obj.Position - hrp.Position).Magnitude
+			if dist < nearestDist then
+				nearest     = obj
+				nearestDist = dist
+			end
+		end
+	end
+	cachedBall = nearest
+end
+
+-- ── Ball Manipulation helpers ─────────────────────────────────────────────────
+local function characterHasFootball(c, football)
+	if not c then return false end
+	for _, desc in ipairs(c:GetDescendants()) do
+		if desc:IsA("Weld") or desc:IsA("Motor6D") or desc:IsA("WeldConstraint") then
+			if desc.Part0 and desc.Part1 then
+				if desc.Part0.Name == "Football" or desc.Part1.Name == "Football" then
+					return true
+				end
+			end
+		end
+	end
+	for _, child in ipairs(c:GetChildren()) do
+		if child:IsA("Tool") then
+			local handle = child:FindFirstChild("Handle")
+			if handle and handle.Name == "Football" then return true end
+		end
+	end
+	if football then
+		for _, desc in ipairs(football:GetDescendants()) do
+			if desc:IsA("Weld") or desc:IsA("Motor6D") or desc:IsA("WeldConstraint") then
+				if desc.Part0 and desc.Part1 then
+					if desc.Part0.Parent == c or desc.Part1.Parent == c then
+						return true
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+local function localHasFootball()
+	return characterHasFootball(char, cachedBall)
+end
+
+local function anyOtherHasFootball(football)
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player then
+			local c = plr.Character
+			if c and characterHasFootball(c, football) then return true end
+		end
+	end
+	return false
+end
+
+local function findFootballSpeed()
+	for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
+		if v.Name == "FootballSpeed" and v:IsA("NumberValue") then
+			footballSpeed = v; return
+		end
+	end
+end
+findFootballSpeed()
+ReplicatedStorage.DescendantAdded:Connect(function(v)
+	if not footballSpeed and v.Name == "FootballSpeed" and v:IsA("NumberValue") then
+		footballSpeed = v
+	end
+end)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+RunService.Stepped:Connect(function(_, dt)
+	-- Noclip: throttled to every 0.1 s — was running every physics step
+	if noclipEnabled and char then
+		noclipTimer = noclipTimer + dt
+		if noclipTimer >= 0.1 then
+			noclipTimer = 0
+			for _, p in pairs(char:GetDescendants()) do
+				if p:IsA("BasePart") then p.CanCollide = false end
+			end
+		end
+	end
+
+	-- Ball cache: only scan workspace when the ball is gone or every 0.3 s
+	local needsBall = (pullVecEnabled and pullVecHeld) or orbEnabled
+		or (cfMagsEnabled and magsHeld) or orbMagsEnabled
+	if needsBall then
+		if not cachedBall or not cachedBall.Parent then
+			refreshBallCache()
+			ballSearchTimer = 0.3
+		else
+			ballSearchTimer = ballSearchTimer - dt
+			if ballSearchTimer <= 0 then
+				refreshBallCache()
+				ballSearchTimer = 0.3
+			end
+		end
+	end
+
+	local nearest     = cachedBall
+	local nearestDist = (nearest and hrp) and (nearest.Position - hrp.Position).Magnitude or math.huge
+
+	-- Frame-rate-independent lerp alpha (same feel at any FPS)
+	local alpha = 1 - (1 - math.clamp(pullVecSmooth, 0.01, 0.99)) ^ (dt * 60)
+
+	-- Pull Orb visuals + orb pull
+	if orbEnabled and nearest then
+		if not orbPart or not orbPart.Parent then
+			orbPart              = Instance.new("Part")
+			orbPart.Name         = "NexusOrb"
+			orbPart.Shape        = Enum.PartType.Ball
+			orbPart.Anchored     = true
+			orbPart.CanCollide   = false
+			orbPart.CastShadow   = false
+			orbPart.Massless     = true
+			orbPart.Color        = orbColor
+			orbPart.Transparency = orbTransparency
+			orbPart.Material     = Enum.Material.ForceField
+			orbPart.Size         = Vector3.new(orbRadius * 2, orbRadius * 2, orbRadius * 2)
+			orbPart.Parent       = workspace
+		end
+		orbPart.CFrame       = CFrame.new(nearest.Position)
+		orbPart.Color        = orbColor
+		orbPart.Transparency = orbTransparency
+		orbPart.Size         = Vector3.new(orbRadius * 2, orbRadius * 2, orbRadius * 2)
+
+		if hrp and nearestDist <= orbRadius then
+			local headHeight  = 3
+			local forwardBias = 15
+			local ballVel = nearest.AssemblyLinearVelocity
+			local flatVel = Vector3.new(ballVel.X, 0, ballVel.Z)
+			local target
+			if flatVel.Magnitude > 2 then
+				target = nearest.Position + Vector3.new(0, -headHeight, 0) + flatVel.Unit * forwardBias
+			else
+				target = nearest.Position - Vector3.new(0, headHeight, 0)
+			end
+			hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity:Lerp(
+				(target - hrp.Position).Unit * pullVecStrength, alpha)
+		end
+	elseif orbPart and orbPart.Parent then
+		orbPart:Destroy()
+		orbPart = nil
+	end
+
+	-- CFrame Mags (reuses cached ball — no extra scan)
+	-- CFrame Mags — claim ownership every held frame so writes are authoritative
+	if cfMagsEnabled and magsHeld and hrp and nearest then
+		local head = char and char:FindFirstChild("Head")
+		if head then
+			claimBallOwnership(nearest)
+			nearest.CFrame                  = CFrame.new(head.Position)
+			nearest.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+			nearest.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+			nearest.CanCollide              = false
+		end
+	end
+
+	-- Orb Mags — same ownership treatment
+	if orbMagsEnabled and orbEnabled and hrp and nearest then
+		local head = char and char:FindFirstChild("Head")
+		if nearestDist <= orbRadius and head then
+			claimBallOwnership(nearest)
+			nearest.CFrame                  = CFrame.new(head.Position)
+			nearest.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+			nearest.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+			nearest.CanCollide              = false
+		end
+	end
+
+	-- Pull Vec
+	if pullVecEnabled and pullVecHeld and hrp and nearest then
+		local headHeight  = 3
+		local forwardBias = 15
+		local ballVel = nearest.AssemblyLinearVelocity
+		local flatVel = Vector3.new(ballVel.X, 0, ballVel.Z)
+		local target
+		if flatVel.Magnitude > 2 then
+			target = nearest.Position + Vector3.new(0, -headHeight, 0) + flatVel.Unit * forwardBias
+		else
+			target = nearest.Position - Vector3.new(0, headHeight, 0)
+		end
+		local toTarget = target - hrp.Position
+		local dist     = toTarget.Magnitude
+		if dist > 2 then
+			hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity:Lerp(
+				toTarget.Unit * pullVecStrength, alpha)
+		else
+			hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
+		end
+	end
+end)
+
+local function rocketBoost()
+	if rocketActive or rocketCooldown or not hum then return end
+	rocketActive   = true
+	rocketCooldown = true
+	local conn = RunService.RenderStepped:Connect(function()
+		if hum then hum.WalkSpeed = rocketSpeed end
+	end)
+	task.delay(rocketDuration, function()
+		conn:Disconnect()
+		if hum then hum.WalkSpeed = walkSpeed end
+		rocketActive = false
+		task.delay(0.25, function() rocketCooldown = false end)
+	end)
+end
+
+RunService.RenderStepped:Connect(function()
+	if hum and not rocketActive then
+		if walkSpeedLock and hum.WalkSpeed ~= walkSpeed then
+			hum.WalkSpeed = walkSpeed
+		end
+	end
+end)
+
+local followEnabled  = false
+local followTarget   = nil
+local ctrlFollow     = Enum.KeyCode.DPadRight
+local followKey      = Enum.KeyCode.F
+
+-- ── Sticky Head keybinds ──────────────────────────────────────────────────────
+local ctrlStickyHead = Enum.KeyCode.ButtonR1
+local stickyHeadKey  = Enum.KeyCode.Unknown
+-- ─────────────────────────────────────────────────────────────────────────────
+
+local function getNearestPlayer()
+	local nearest, nearestDist = nil, math.huge
+	for _, plr in pairs(Players:GetPlayers()) do
+		if plr == player then continue end
+		local c = plr.Character
+		local root = c and c:FindFirstChild("HumanoidRootPart")
+		if not root then continue end
+		local dist = (root.Position - hrp.Position).Magnitude
+		if dist < nearestDist then
+			nearest = plr
+			nearestDist = dist
+		end
+	end
+	return nearest
+end
+
+local function toggleFollow()
+	if followEnabled then
+		followEnabled = false
+		followTarget  = nil
+		if hum then hum:MoveTo(hrp.Position) end
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Follow off", Duration = 2, Icon = "flame" })
+	else
+		followTarget = getNearestPlayer()
+		if followTarget then
+			followEnabled = true
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Following: " .. followTarget.Name, Duration = 2, Icon = "flame" })
+		else
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "No players found", Duration = 2, Icon = "flame" })
+		end
+	end
+end
+
+-- ── Master Heartbeat ─────────────────────────────────────────────────────────
+-- All per-frame logic in ONE connection — avoids firing 5 separate loops at 60fps
+-- and computes isBeingBoosted() once, shared across all boost features.
+local gloveRefreshTimer = 0
+local greyPixelTimer    = 0
+
+RunService.Heartbeat:Connect(function(dt)
+	-- ── Follow ──────────────────────────────────────────────────────────────
+	if followEnabled and followTarget and hrp and hum then
+		local c    = followTarget.Character
+		local root = c and c:FindFirstChild("HumanoidRootPart")
+		if not root then
+			followEnabled = false
+			followTarget  = nil
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Follow target lost", Duration = 2, Icon = "user-x" })
+		else
+			hum:MoveTo(root.Position)
+		end
+	end
+
+	if not hrp then return end
+
+	-- ── Boost Amp (delta-based, no player scan needed) ──────────────────────
+	local currentY = hrp.AssemblyLinearVelocity.Y
+	local delta    = currentY - lastYVelocity
+
+	if boostAmpEnabled and delta > 10 and not boostAmpFired then
+		boostAmpFired = true
+		hrp.AssemblyLinearVelocity = Vector3.new(
+			hrp.AssemblyLinearVelocity.X,
+			currentY * boostAmpMultiplier,
+			hrp.AssemblyLinearVelocity.Z)
+		task.delay(0.3, function() boostAmpFired = false end)
+	end
+
+	lastYVelocity = currentY
+
+	-- ── Gloves: enforce size every 0.5 s only ───────────────────────────────
+	-- Catching is handled on RenderStepped (before physics) below
+	if glovesEnabled then
+		gloveRefreshTimer = gloveRefreshTimer + dt
+		if gloveRefreshTimer >= 0.5 then
+			gloveRefreshTimer = 0
+			applyGloves()
+		end
+	end
+
+	-- ── Pixel Faces: throttled to every 5 s ────────────────────────────────
+	if pixelFacesEnabled then
+		greyPixelTimer = greyPixelTimer + dt
+		if greyPixelTimer >= 5 then
+			greyPixelTimer = 0
+			applyPixelFaces()
+		end
+	end
+
+	-- ── Ball Manipulation ────────────────────────────────────────────────────
+	if (ballMagEnabled or ballRangeEnabled) and hrp then
+		local ball = cachedBall
+		if ball and ball.Parent then
+			local dist = (hrp.Position - ball.Position).Magnitude
+
+			if ballRangeEnabled and footballSpeed then
+				footballSpeed.Value = dist <= ballSpeedRange and ballBoostedSpeed or ballDefaultSpeed
+			end
+
+			if ballMagEnabled and not localHasFootball() and not anyOtherHasFootball(ball) then
+				if dist <= ballMagRange then
+					ball.CanCollide              = false
+					ball.AssemblyAngularVelocity = Vector3.zero
+					claimBallOwnership(ball)
+
+					local targetHand, bestDist = nil, math.huge
+					for _, name in ipairs({ "RightHand", "LeftHand", "Right Arm", "Left Arm" }) do
+						local hand = char and char:FindFirstChild(name)
+						if hand then
+							local d = (ball.Position - hand.Position).Magnitude
+							if d < bestDist then bestDist = d; targetHand = hand end
+						end
+					end
+
+					local targetPos = targetHand
+						and (targetHand.CFrame * CFrame.new(0, 0.35, -0.25)).Position
+						or  (hrp.Position + hrp.CFrame.LookVector * 3 + Vector3.new(0, 2.5, 0))
+
+					local toTarget = targetPos - ball.Position
+					if toTarget.Magnitude < ballSnapDist then
+						ball.CFrame                 = CFrame.new(targetPos)
+						ball.AssemblyLinearVelocity = Vector3.zero
+					else
+						local t      = tick()
+						local jitter = Vector3.new(
+							math.sin(t * ballJitterFreq * 1.6) * ballJitterAmp * 0.2,
+							math.sin(t * ballJitterFreq)       * ballJitterAmp,
+							math.cos(t * ballJitterFreq * 1.3) * ballJitterAmp * 0.2
+						)
+						ball.AssemblyLinearVelocity = toTarget.Unit * ballPullStrength + jitter
+					end
+				end
+			end
+		end
+	end
+
+	-- ── Head Manipulation ────────────────────────────────────────────────────
+	-- When falling from a high jump (Y crosses from > 12 down to ≤ 2),
+	-- steer horizontally toward the nearest head within 25 studs
+	if headManipEnabled and hrp then
+		local curY = hrp.AssemblyLinearVelocity.Y
+		if curY <= 2 and lastYVelocity > 12 then
+			local nearestHead, shortestDist = nil, math.huge
+			for _, other in ipairs(Players:GetPlayers()) do
+				if other ~= player and other.Character then
+					local h = other.Character:FindFirstChild("Head")
+					if h then
+						local dist = (hrp.Position - h.Position).Magnitude
+						if dist < shortestDist and dist < 25 then
+							shortestDist = dist; nearestHead = h
+						end
+					end
+				end
+			end
+			if nearestHead then
+				local targetPos = nearestHead.Position + Vector3.new(0, 2.5, 0)
+				local dir       = (targetPos - hrp.Position).Unit
+				local force     = dir * (headStrength * 65)
+				hrp.AssemblyLinearVelocity = Vector3.new(
+					hrp.AssemblyLinearVelocity.X * 0.4 + force.X,
+					hrp.AssemblyLinearVelocity.Y,
+					hrp.AssemblyLinearVelocity.Z * 0.4 + force.Z
+				)
+			end
+		end
+	end
+
+	-- ── Jump Pull Vec ────────────────────────────────────────────────────────
+	-- Auto-holds pull vec while the player is airborne and rising after a jump
+	if jumpPullEnabled and pullVecEnabled and hrp and hum then
+		local inAir = hum.FloorMaterial == Enum.Material.Air
+		if inAir and hrp.AssemblyLinearVelocity.Y > 3 and not jumpPullActive then
+			jumpPullActive = true
+			pullVecHeld    = true
+		elseif not inAir and jumpPullActive then
+			jumpPullActive = false
+			pullVecHeld    = false
+		end
+	end
+end)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+local boostAmpEnabled    = false
+local boostAmpMultiplier = 2
+local lastYVelocity      = 0
+local boostAmpFired      = false
+
+-- ── Fling / Auto Boost / Fling Up — Touched-event head detection ─────────────
+local flingEnabled     = false
+local flingPower       = 150
+local autoBoostEnabled = false
+local autoBoostFired   = false
+local flingUpEnabled   = false
+local flingUpFired     = false
+local headConnections  = {}
+
+local function connectHeadTouch(head)
+	if not head or not head:IsA("BasePart") then return end
+	if headConnections[head] then return end
+
+	local conn = head.Touched:Connect(function(hit)
+		if not hrp or hit ~= hrp then return end
+		if hrp.Position.Y <= head.Position.Y + 0.3 then return end
+
+		-- Auto Boost: straight up using boostPower
+		if autoBoostEnabled and not autoBoostFired then
+			autoBoostFired = true
+			hrp.AssemblyLinearVelocity = Vector3.new(
+				hrp.AssemblyLinearVelocity.X, boostPower, hrp.AssemblyLinearVelocity.Z)
+			task.delay(0.3, function() autoBoostFired = false end)
+		end
+
+		-- Fling: diagonal — upward + away from the head
+		if flingEnabled then
+			local flat = Vector3.new(
+				hrp.Position.X - head.Position.X, 0, hrp.Position.Z - head.Position.Z)
+			local dir = flat.Magnitude > 0 and flat.Unit or Vector3.new(1, 0, 0)
+			hrp.AssemblyLinearVelocity = Vector3.new(
+				dir.X * flingPower, flingPower * 0.8, dir.Z * flingPower)
+		end
+
+		-- Fling Up (Kickup): boost up + single fast spin
+		if flingUpEnabled and not flingUpFired then
+			flingUpFired = true
+			hrp.AssemblyLinearVelocity = Vector3.new(
+				hrp.AssemblyLinearVelocity.X, boostPower, hrp.AssemblyLinearVelocity.Z)
+			local rotated = 0
+			local spinConn
+			spinConn = RunService.RenderStepped:Connect(function(dt2)
+				if not hrp or rotated >= math.pi * 2 then
+					spinConn:Disconnect()
+					if hrp then hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end
+					task.delay(0.3, function() flingUpFired = false end)
+					return
+				end
+				local step = math.pi * 16 * dt2
+				rotated    = rotated + step
+				hrp.AssemblyAngularVelocity = Vector3.new(0, 200, 0)
+				hrp.CFrame = hrp.CFrame * CFrame.Angles(0, step, 0)
+			end)
+		end
+	end)
+
+	headConnections[head] = conn
+	head.AncestryChanged:Connect(function(_, parent)
+		if not parent and headConnections[head] then
+			headConnections[head]:Disconnect()
+			headConnections[head] = nil
+		end
+	end)
+end
+
+local function setupHeadBoosts()
+	for _, plr in pairs(Players:GetPlayers()) do
+		if plr ~= player and plr.Character then
+			local head = plr.Character:FindFirstChild("Head")
+			if head then connectHeadTouch(head) end
+			plr.CharacterAdded:Connect(function(c)
+				task.wait(0.5)
+				local newHead = c:FindFirstChild("Head")
+				if newHead then connectHeadTouch(newHead) end
+			end)
+		end
+	end
+end
+setupHeadBoosts()
+
+Players.PlayerAdded:Connect(function(plr)
+	plr.CharacterAdded:Connect(function()
+		task.wait(0.5)
+		setupHeadBoosts()
+	end)
+end)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- ── Gloves — RenderStepped catcher (runs BEFORE physics each frame) ───────────
+-- Heartbeat fires after physics so fast balls skip past. RenderStepped catches
+-- them before they move. Also does predictive interception for far/fast throws.
+local PRE_CLAIM_RADIUS = 22   -- studs — start asserting ownership early
+local SNAP_RADIUS_MULT = 1.2  -- multiplier on gloveSize for final snap
+local PREDICT_SECS     = 0.35 -- how far ahead (seconds) to look for intercept
+
+RunService.RenderStepped:Connect(function()
+	if not glovesEnabled or not char or not hrp then return end
+	local ball = cachedBall
+	if not ball or not ball.Parent then return end
+
+	local ballPos  = ball.Position
+	local ballVel  = ball.AssemblyLinearVelocity
+	local speed    = ballVel.Magnitude
+	-- Faster balls get a bigger snap window
+	local snapR    = gloveSize * SNAP_RADIUS_MULT + speed * 0.05
+	local hands    = getHands(char)
+
+	-- Find the closest hand once (used for steering)
+	local closestHand, closestDist = nil, math.huge
+	for _, hand in ipairs(hands) do
+		if hand:IsA("BasePart") then
+			local d = (ballPos - hand.Position).Magnitude
+			if d < closestDist then closestHand = hand; closestDist = d end
+		end
+	end
+	if not closestHand then return end
+
+	-- Pre-claim zone: assert ownership, disable CanCollide,
+	-- and gently steer + dampen the ball toward the hand
+	if closestDist <= PRE_CLAIM_RADIUS then
+		claimBallOwnership(ball)
+		pcall(function() ball.CanCollide = false end)
+
+		if closestDist > snapR and speed > 1 then
+			local toHand   = (closestHand.Position - ballPos).Unit
+			-- Blend velocity toward hand direction (15 % per frame) — subtle guide
+			local steered  = ballVel:Lerp(toHand * speed, 0.15)
+			-- Dampen speed slightly so there's more time to register the catch
+			local damped   = steered * 0.97
+			pcall(function() ball.AssemblyLinearVelocity = damped end)
+		end
+	end
+
+	-- Current-position snap
+	if closestDist <= snapR then
+		catchBall(ball, closestHand)
+		return
+	end
+
+	-- Predictive intercept along trajectory
+	if speed > 2 then
+		local toHand = closestHand.Position - ballPos
+		local t      = math.clamp(toHand:Dot(ballVel) / (speed * speed), 0, PREDICT_SECS)
+		local future = ballPos + ballVel * t
+		if (future - closestHand.Position).Magnitude <= snapR * 1.4 then
+			catchBall(ball, closestHand)
+		end
+	end
+end)
+-- ─────────────────────────────────────────────────────────────────────────────
+local hitboxSize         = 2
+local hitboxTransparency = 0.5
+local originalHitboxes   = {}
+
+local function applyHitbox(otherPlayer)
+	if not otherPlayer.Character then return end
+	local otherHRP = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not otherHRP then return end
+	if not originalHitboxes[otherPlayer.UserId] then
+		originalHitboxes[otherPlayer.UserId] = {
+			Size         = otherHRP.Size,
+			Transparency = otherHRP.Transparency,
+		}
+	end
+	otherHRP.Size         = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+	otherHRP.Transparency = hitboxTransparency
+end
+
+local function restoreHitbox(otherPlayer)
+	if not otherPlayer.Character then return end
+	local otherHRP = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if otherHRP and originalHitboxes[otherPlayer.UserId] then
+		local orig = originalHitboxes[otherPlayer.UserId]
+		otherHRP.Size         = orig.Size
+		otherHRP.Transparency = orig.Transparency
+	end
+end
+
+local function refreshAllHitboxes()
+	for _, plr in pairs(Players:GetPlayers()) do
+		if plr ~= player then
+			if hitboxEnabled then applyHitbox(plr) else restoreHitbox(plr) end
+		end
+	end
+end
+
+Players.PlayerAdded:Connect(function(plr)
+	plr.CharacterAdded:Connect(function()
+		task.wait(1)
+		if hitboxEnabled then applyHitbox(plr) end
+	end)
+end)
+for _, plr in pairs(Players:GetPlayers()) do
+	if plr ~= player then
+		plr.CharacterAdded:Connect(function()
+			task.wait(1)
+			if hitboxEnabled then applyHitbox(plr) end
+		end)
+	end
+end
+
+local function getHands(c)
+	if c:FindFirstChild("RightHand") then
+		return { c.RightHand, c.LeftHand }
+	elseif c:FindFirstChild("Right Arm") then
+		return { c["Right Arm"], c["Left Arm"] }
+	end
+	return {}
+end
+
+local cachedPlayer = nil
+
+local function setOwner(hand, player)
+	local ok = pcall(hand.SetNetworkOwner, hand, player)
+	if not ok then
+		pcall(hand.SetNetworkOwner, hand, nil)
+	end
+end
+
+-- ── Gloves — Network Ownership ───────────────────────────────────────────────
+-- Claims physics authority over the ball so THIS client moves it, not the server.
+-- Without ownership the CFrame writes race against the server and lose.
+
+local function claimBallOwnership(ball)
+	if not ball or not ball.Parent then return end
+	-- Try to take ownership; fall back to server-owned (nil) if the game blocks it
+	local ok = pcall(function() ball:SetNetworkOwner(player) end)
+	if not ok then pcall(function() ball:SetNetworkOwner(nil) end) end
+end
+
+local function catchBall(ball, hand)
+	claimBallOwnership(ball)
+	task.defer(function()
+		if not ball or not ball.Parent then return end
+		-- Use head position if available — game registers catches via head contact
+		local head   = char and char:FindFirstChild("Head")
+		local target = head and head.Position or hand.Position
+		ball.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+		ball.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+		ball.CanCollide              = false
+		ball.CFrame                  = CFrame.new(target)
+		-- Re-assert ownership + position for 4 frames so the server can't take it back
+		for i = 1, 4 do
+			task.delay(i / 60, function()
+				if not ball or not ball.Parent then return end
+				claimBallOwnership(ball)
+				ball.CFrame                  = CFrame.new(target)
+				ball.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+				ball.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+				ball.CanCollide              = false
+			end)
+		end
+	end)
+end
+
+local gloveConnections = {}
+
+local function disconnectGloveConnections()
+	for _, conn in pairs(gloveConnections) do pcall(conn.Disconnect, conn) end
+	gloveConnections = {}
+end
+
+local function connectGloveTouched(hand)
+	if gloveConnections[hand] then
+		pcall(gloveConnections[hand].Disconnect, gloveConnections[hand])
+	end
+	gloveConnections[hand] = hand.Touched:Connect(function(hit)
+		if not glovesEnabled then return end
+		if hit.Name == "Football" and hit:IsA("BasePart") then
+			catchBall(hit, hand)
+		end
+	end)
+end
+
+local function applyGloves()
+	if not char then return end
+	for _, hand in ipairs(getHands(char)) do
+		if hand:IsA("BasePart") then
+			if not originalHandSizes[hand] then
+				originalHandSizes[hand] = {
+					Size         = hand.Size,
+					Material     = hand.Material,
+					Color        = hand.Color,
+					Transparency = hand.Transparency,
+					CanCollide   = hand.CanCollide,
+					Massless     = hand.Massless,
+				}
+			end
+			hand.Size         = Vector3.new(gloveSize, gloveSize, gloveSize)
+			hand.Material     = Enum.Material.ForceField
+			hand.Color        = Color3.fromRGB(255, 70, 70)
+			hand.Transparency = glovesInvisible and 1 or 0.4
+			hand.CanCollide   = false
+			hand.Massless     = true
+			hand.CanTouch     = true
+			-- Re-assert ownership of the hand every refresh
+			pcall(function() hand:SetNetworkOwner(player) end)
+			connectGloveTouched(hand)
+		end
+	end
+end
+
+Players.PlayerAdded:Connect(function(plr)
+	cachedPlayer = plr
+	plr.CharacterAdded:Connect(function(character)
+		for _, name in ipairs({ "LeftHand", "RightHand", "Left Arm", "Right Arm" }) do
+			local part = character:FindFirstChild(name)
+			if part then pcall(function() part:SetNetworkOwner(plr) end) end
+		end
+	end)
+end)
+
+local function removeGloves()
+	disconnectGloveConnections()
+	if not char then return end
+	for _, hand in ipairs(getHands(char)) do
+		if not hand:IsA("BasePart") then continue end
+		local original = originalHandSizes[hand]
+		if not original then continue end
+		hand.Size         = original.Size
+		hand.Material     = original.Material
+		hand.Color        = original.Color
+		hand.Transparency = original.Transparency
+		hand.CanCollide   = original.CanCollide
+		hand.Massless     = original.Massless
+		pcall(function() hand:SetNetworkOwner(nil) end)
+	end
+end
+-- ─────────────────────────────────────────────────────────────────────────────
+
+player.CharacterAdded:Connect(function()
+	task.wait(1)
+	originalHandSizes = {}
+	if glovesEnabled then applyGloves() end
+end)
+
+local divePowerConn = nil
+
+local function updateDivePower(power)
+	local gameId = player:FindFirstChild("Replicated") and player.Replicated:FindFirstChild("GameID")
+	if not gameId then return end
+	local gid = gameId.Value
+	for _, folderName in ipairs({ "Games", "MiniGames" }) do
+		local mainFolder = ReplicatedStorage:FindFirstChild(folderName)
+		if mainFolder then
+			local gameFolder = mainFolder:FindFirstChild(gid)
+			if gameFolder then
+				local gameParams = gameFolder:FindFirstChild("GameParams")
+				if gameParams then
+					local dp = gameParams:FindFirstChild("DivePower")
+					if dp and dp:IsA("NumberValue") then
+						dp.Value = power
+						if divePowerConn then divePowerConn:Disconnect() end
+						divePowerConn = dp:GetPropertyChangedSignal("Value"):Connect(function()
+							if dp.Value ~= power then dp.Value = power end
+						end)
+					end
+				end
+			end
+		end
+	end
+end
+
+local currentAnimTrack = nil
+
+local EMOTES = {
+	{ name = "BBS",         id = "rbxassetid://83690407262789",  speed = 1.25 },
+	{ name = "BOP",         id = "rbxassetid://8028669437",      speed = 1    },
+	{ name = "Hackers",     id = "rbxassetid://10714364213",     speed = 1    },
+	{ name = "HD",          id = "rbxassetid://133666867152446", speed = 1    },
+	{ name = "TTL",         id = "rbxassetid://125578981255289", speed = 1    },
+	{ name = "NH",          id = "rbxassetid://83345430870757",  speed = 1    },
+	{ name = "CCL",         id = "rbxassetid://107875941017127", speed = 1    },
+	{ name = "Penguin",     id = "rbxassetid://5439075558",      speed = 1    },
+	{ name = "Worm",        id = "rbxassetid://133640711863790", speed = 1    },
+	{ name = "Griddy",      id = "rbxassetid://8028694339",      speed = 1    },
+	{ name = "Sam Slash",   id = "rbxassetid://15249657798",     speed = 1    },
+	{ name = "Dimension",   id = "rbxassetid://5618747341",      speed = 1    },
+	{ name = "Ballspin",    id = "rbxassetid://14215798544",     speed = 1    },
+	{ name = "Thug",        id = "rbxassetid://13550466835",     speed = 1    },
+	{ name = "Inner Child", id = "rbxassetid://14215788817",     speed = 1    },
+	{ name = "Sturdy",      id = "rbxassetid://14215791622",     speed = 1    },
+	{ name = "Smith Knicks",id = "rbxassetid://15312473847",     speed = 1    },
+	{ name = "Mop",         id = "rbxassetid://14215807283",     speed = 1    },
+	{ name = "MPG",         id = "rbxassetid://14138482621",     speed = 1    },
+	{ name = "Moon",        id = "rbxassetid://14216002323",     speed = 1    },
+	{ name = "Eagle Flap",  id = "rbxassetid://2293380203",      speed = 1    },
+	{ name = "PPJT",        id = "rbxassetid://5433555683",      speed = 1    },
+	{ name = "Headless",    id = "rbxassetid://5704065738",      speed = 1    },
+	{ name = "Druski",      id = "rbxassetid://14901504235",     speed = 1    },
+	{ name = "Keep it hot", id = "http://www.roblox.com/asset/?id=85267023718407", speed = 1 },
+	{ name = "Silencer",    id = "rbxassetid://15249654202",     speed = 1    },
+	{ name = "Reanimated",  id = "rbxassetid://2293388847",      speed = 1    },
+	{ name = "Money Hop Switch", id = "rbxassetid://132555082396072", speed = 1 },
+	{ name = "Turbulence",  id = "rbxassetid://13643188123",     speed = 1    },
+}
+
+local function stopEmote()
+	if currentAnimTrack then
+		currentAnimTrack:Stop()
+		currentAnimTrack:Destroy()
+		currentAnimTrack = nil
+	end
+end
+
+local function playEmote(id, speed)
+	stopEmote()
+	if not hum then return end
+	local anim = Instance.new("Animation")
+	anim.AnimationId = id
+	local ok, track = pcall(function() return hum:LoadAnimation(anim) end)
+	if ok and track then
+		currentAnimTrack = track
+		track.Looped = true
+		track:Play()
+		track:AdjustSpeed(speed or 1)
+	end
+end
+
+local equippedItems = {}
+
+local ITEMS = {
+	Coldstare    = { mesh = "rbxassetid://5028704943",     texture = "rbxassetid://5047708728",     parent = "UpperTorso", scale = Vector3.new(1,1,1),          offset = CFrame.new(0,0.15,0.65)    * CFrame.Angles(0,math.rad(180),0) },
+	DesertVest   = { mesh = "rbxassetid://11755494017",    texture = "rbxassetid://11755494031",    parent = "UpperTorso", scale = Vector3.new(0.73,1.13,0.75),  offset = CFrame.new(0,0,-0.05) },
+	DRC          = { mesh = "rbxassetid://6541224713",     texture = "rbxassetid://7833727918",     parent = "Head",       scale = Vector3.new(1.01,1.01,1.01),  offset = CFrame.new(0,0.8,0.15)     * CFrame.Angles(0,math.rad(90),0)  },
+	DesignerKeff = { mesh = "rbxassetid://14156626934", texture = "rbxassetid://14156781317", parent = "Head", scale = Vector3.new(1,1,1), offset = CFrame.new(-0.05,0.41,0.15) * CFrame.Angles(math.rad(0), math.rad(180), math.rad(0)) },
+	PinkScene    = { mesh = "rbxassetid://73581570515279", texture = "rbxassetid://86617487565011", parent = "Head",       scale = Vector3.new(0.95,0.95,0.95),  offset = CFrame.new(-0.1,0.1,0.2)   * CFrame.Angles(0,math.rad(180),0) },
+	SeeingStars  = { mesh = "rbxassetid://62139052",       texture = "rbxassetid://62139103",       parent = "Head",       scale = Vector3.new(1.05,1.05,1.05),  offset = CFrame.new(0,0.05,-0.45) },
+	SubarcticCommando = { mesh = "http://www.roblox.com/asset/?id=39200112", texture = "http://www.roblox.com/asset/?id=39200088", parent = "Head", scale = Vector3.new(1,1,1), offset = CFrame.new(0,0.15,0) },
+	TacticalVest = { mesh = "rbxassetid://11754584493",    texture = "rbxassetid://11754584535",    parent = "UpperTorso", scale = Vector3.new(0.73,1.13,0.75),  offset = CFrame.new(0,0,-0.05)      * CFrame.Angles(0,math.rad(180),0) },
+	WhiteTowel   = { mesh = "rbxassetid://6919149797",     texture = "rbxassetid://6923948446",     parent = "LowerTorso", scale = Vector3.new(1,1,1),           offset = CFrame.new(0.55,-0.65,-0.15)*CFrame.Angles(0,math.rad(90),0) },
+	LavaScene    = { mesh = "http://www.roblox.com/asset/?id=83490415", texture = "http://www.roblox.com/asset/?id=83491029", parent = "Head", scale = Vector3.new(1,1,1), offset = CFrame.new(-0.1,0.1,0.2) },
+	KingCape     = { mesh = "rbxassetid://7547683590",     texture = "rbxassetid://7547692544",     parent = "UpperTorso", scale = Vector3.new(1,1,1),           offset = CFrame.new(0,-0.85,0.7) },
+	KingCrown    = { mesh = "rbxassetid://2180251969",     texture = "rbxassetid://2180251094",     parent = "Head",       scale = Vector3.new(1,1,1),           offset = CFrame.new(0,1,0) },
+	GravBeanie   = { mesh = "rbxassetid://14310737075",    texture = "rbxassetid://15591009630",    parent = "Head",       scale = Vector3.new(1,1,1),           offset = CFrame.new(0,0.6,0)        * CFrame.Angles(math.rad(0), math.rad(180), math.rad(0.05)) },
+	LAchrome     = { mesh = "rbxassetid://15498987026",    texture = "rbxassetid://15498997319",    parent = "Head",       scale = Vector3.new(1,1,1),           offset = CFrame.new(0,0.6,-0.2) },
+	Ush          = { mesh = "rbxassetid://12710398184",    texture = "rbxassetid://12710399814",    parent = "Head",       scale = Vector3.new(1,1,1),           offset = CFrame.new(0,0.3,0)        * CFrame.Angles(math.rad(0), math.rad(180), math.rad(0)) },
+	RedCW        = { mesh = "http://www.roblox.com/asset/?id=1577360", texture = "rbxassetid://1143320126",  parent = "Head", scale = Vector3.new(1,1.3,1),      offset = CFrame.new(0,0.25,-0.19)   * CFrame.Angles(math.rad(0), math.rad(0), math.rad(0.05)) },
+	BlackCW      = { mesh = "http://www.roblox.com/asset/?id=1577360", texture = "http://www.roblox.com/asset/?id=1577349", parent = "Head", scale = Vector3.new(1,1.3,1), offset = CFrame.new(0,0.25,-0.19) * CFrame.Angles(math.rad(0), math.rad(0), math.rad(0.05)) },
+	PurpleCW     = { mesh = "http://www.roblox.com/asset/?id=1577360", texture = "rbxassetid://14296191274", parent = "Head", scale = Vector3.new(1,1.3,1),      offset = CFrame.new(0,0.25,-0.19)   * CFrame.Angles(math.rad(0), math.rad(0), math.rad(0.05)) },
+	PoliceVest = { mesh = "rbxassetid://10692364338", texture = "rbxassetid://10691986674", parent = "UpperTorso", scale = Vector3.new(0.8,1.1,0.8), offset = CFrame.new(0,-0.05,0) * CFrame.Angles(math.rad(0), math.rad(180), math.rad(0)) },
+	ArcTacVest = { mesh = "rbxassetid://10714316724", texture = "rbxassetid://10714600858", parent = "UpperTorso", scale = Vector3.new(0.7,1,0.8), offset = CFrame.new(0,0,-0.1) },
+	ArticCommando = { mesh = "http://www.roblox.com/asset/?id=38965549", texture = "http://www.roblox.com/asset/?id=38965529", parent = "Head", scale = Vector3.new(1,1,1), offset = CFrame.new(0,0,0) },
+	GreyEvil = { mesh = "rbxassetid://14470653457", texture = "rbxassetid://14473920427", parent = "Head", scale = Vector3.new(1,1,1), offset = CFrame.new(0,0.41,0.1) * CFrame.Angles(math.rad(0), math.rad(180), math.rad(0)) },
+	PilgrimHat = { mesh = "http://www.roblox.com/asset/?id=1223118", texture = "http://www.roblox.com/asset/?id=5671898", parent = "Head", scale = Vector3.new(1.7,1.7,1.7), offset = CFrame.new(0,1,0) },
+	y2kbluebeanie = { mesh = "rbxassetid://13870642930", texture = "rbxassetid://13870661669", parent = "Head", scale = Vector3.new(1,1,1), offset = CFrame.new(0,0.9,0) },
+	MonochromeMilitary = { mesh = "http://www.roblox.com/asset/?id=192571937 ", texture = "http://www.roblox.com/asset/?id=192571951 ", parent = "Head", scale = Vector3.new(1.4,1.4,1.4), offset = CFrame.new(0,0.4,0) },
+	MidnightCommando = { mesh = "http://www.roblox.com/asset/?id=38965549", texture = "http://www.roblox.com/asset/?id=259417739", parent = "Head", scale = Vector3.new(1,1,1), offset = CFrame.new(0,0,0) },
+	GasMask = { mesh = "rbxassetid://8928474817", texture = "rbxassetid://8927755382", parent = "Head", scale = Vector3.new(1,1,1), offset = CFrame.new(0,0,0) },
+	Snorkel = { mesh = "http://www.roblox.com/asset/?id=10547596", texture = "http://www.roblox.com/asset/?id=10517820", parent = "Head", scale = Vector3.new(1.05,1.05,1.05), offset = CFrame.new(0,0.2,0) },
+}
+
+local function equipItem(name)
+	if equippedItems[name] then return end
+	local data = ITEMS[name]
+	if not data then return end
+	local c = char
+	local parentPart = c and c:FindFirstChild(data.parent)
+	if not parentPart then return end
+	local part = Instance.new("Part")
+	part.Name = name; part.Size = Vector3.new(1,1,1)
+	part.CanCollide = false; part.Massless = true; part.Parent = c
+	local mesh = Instance.new("SpecialMesh")
+	mesh.MeshType = Enum.MeshType.FileMesh
+	mesh.MeshId = data.mesh; mesh.TextureId = data.texture
+	mesh.Scale = data.scale; mesh.Parent = part
+	local weld = Instance.new("Motor6D")
+	weld.Part0 = parentPart; weld.Part1 = part
+	weld.C0 = data.offset; weld.Parent = parentPart
+	part.CFrame = parentPart.CFrame * data.offset
+	equippedItems[name] = part
+end
+
+local function unequipItem(name)
+	if equippedItems[name] then
+		equippedItems[name]:Destroy()
+		equippedItems[name] = nil
+	end
+end
+
+player.CharacterAdded:Connect(function(c)
+	task.wait(1)
+	for name in pairs(equippedItems) do
+		equippedItems[name] = nil
+		equipItem(name)
+	end
+end)
+
+local CLOTHES = {
+	{ name = "All Star Shirt",  type = "shirt", id = "rbxassetid://104603634169771" },
+    { name = "All Star Shorts", type = "pants", id = "rbxassetid://73939866847703"  },
+    { name = "Black World Tour Shirt", type = "shirt", id = "rbxassetid://15335037852" },
+    { name = "Pink World Tour Shirt", type = "shirt", id = "rbxassetid://15334978300" },
+    { name = "King Shirt", type = "shirt", id = "rbxassetid://6296265575" },
+    { name = "King Pants", type = "pants", id = "rbxassetid://10725550576" },
+    { name = "Grey Flare", type = "shirt", id = "rbxassetid://15345367906" },
+    { name = "Black Flare", type = "shirt", id = "rbxassetid://15345348842" },
+    { name = "Red Flare", type = "shirt", id = "rbxassetid://15345347397" },
+    { name = "Acid Flare", type = "shirt", id = "rbxassetid://15345352095" },
+    { name = "Pastel Flare", type = "shirt", id = "rbxassetid://15345355082" },
+    { name = "Orange Flare", type = "shirt", id = "rbxassetid://15345357354" },
+    { name = "White World Tour", type = "shirt", id = "rbxassetid://15334975460" },
+    { name = "Hooded Jean Jacket", type = "shirt", id = "rbxassetid://15334917844" },
+}
+
+local originalShirtTemplate  = ""
+local originalPantsTemplate2 = ""
+local shirtWatchConn         = nil
+local pantsWatchConn         = nil
+local activeShirtId          = nil
+local activePantsId          = nil
+
+local templateCache = {}
+
+local function resolveTemplate(rawId, clothType)
+	local idNum = tostring(rawId):match("%d+")
+	if not idNum then return nil end
+
+	local cacheKey = clothType .. ":" .. idNum
+	if templateCache[cacheKey] then
+		return templateCache[cacheKey]
+	end
+
+	local wanted = (clothType == "shirt") and "Shirt" or "Pants"
+
+	local ok, objects = pcall(function()
+		return game:GetObjects("rbxassetid://" .. idNum)
+	end)
+
+	local resolved = "rbxassetid://" .. idNum
+	if ok and objects and objects[1] then
+		local asset = objects[1]
+		local obj = asset:IsA(wanted) and asset or asset:FindFirstChildWhichIsA(wanted, true)
+		if obj then
+			resolved = (clothType == "shirt") and obj.ShirtTemplate or obj.PantsTemplate
+		end
+	end
+
+	templateCache[cacheKey] = resolved
+	return resolved
+end
+
+local function getShirt()
+	local username = player.Name
+	local ok, shirt = pcall(function() return workspace[username].SHIRT_WhiteTShirt end)
+	if ok and shirt then return shirt end
+	return nil
+end
+
+local function getJeans()
+	local username = player.Name
+	local ok, pants = pcall(function() return workspace[username].PANTS_STARTERGrayJeans end)
+	if ok and pants then return pants end
+	return nil
+end
+
+local function applyCloth(clothType, assetId)
+	local template = resolveTemplate(assetId, clothType)
+	if not template then
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Could not resolve template id", Duration = 3, Icon = "flame" })
+		return false
+	end
+
+	if clothType == "shirt" then
+		local shirt = getShirt()
+		if not shirt then
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Shirt object not found", Duration = 3, Icon = "flame" })
+			return false
+		end
+		if originalShirtTemplate == "" then originalShirtTemplate = shirt.ShirtTemplate end
+		shirt.ShirtTemplate = template
+		activeShirtId = template
+		if shirtWatchConn then shirtWatchConn:Disconnect() end
+		shirtWatchConn = shirt:GetPropertyChangedSignal("ShirtTemplate"):Connect(function()
+			if activeShirtId and shirt.ShirtTemplate ~= activeShirtId then
+				shirt.ShirtTemplate = activeShirtId
+			end
+		end)
+		return true
+
+	elseif clothType == "pants" then
+		local pants = getJeans()
+		if not pants then
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Pants object not found", Duration = 3, Icon = "flame" })
+			return false
+		end
+		if originalPantsTemplate2 == "" then originalPantsTemplate2 = pants.PantsTemplate end
+		pants.PantsTemplate = template
+		activePantsId = template
+		if pantsWatchConn then pantsWatchConn:Disconnect() end
+		pantsWatchConn = pants:GetPropertyChangedSignal("PantsTemplate"):Connect(function()
+			if activePantsId and pants.PantsTemplate ~= activePantsId then
+				pants.PantsTemplate = activePantsId
+			end
+		end)
+		return true
+	end
+end
+
+local function resetCloth(clothType)
+	if clothType == "shirt" then
+		activeShirtId = nil
+		if shirtWatchConn then shirtWatchConn:Disconnect(); shirtWatchConn = nil end
+		local shirt = getShirt()
+		if shirt and originalShirtTemplate ~= "" then shirt.ShirtTemplate = originalShirtTemplate end
+		originalShirtTemplate = ""
+	elseif clothType == "pants" then
+		activePantsId = nil
+		if pantsWatchConn then pantsWatchConn:Disconnect(); pantsWatchConn = nil end
+		local pants = getJeans()
+		if pants and originalPantsTemplate2 ~= "" then pants.PantsTemplate = originalPantsTemplate2 end
+		originalPantsTemplate2 = ""
+	end
+end
+
+player.CharacterAdded:Connect(function()
+	task.wait(2)
+	originalShirtTemplate = ""
+	originalPantsTemplate2 = ""
+	if activeShirtId then applyCloth("shirt", activeShirtId) end
+	if activePantsId then applyCloth("pants", activePantsId) end
+end)
+
+local BANNERS = {
+	{ name = "50M Banner", id = "rbxassetid://13200847176" },
+	{ name = "Global",     id = "rbxassetid://13223858189" },
+	{ name = "Twitch CC",  id = "rbxassetid://13284240977" },
+	{ name = "YT CC",      id = "rbxassetid://13181356130" },
+	{ name = "Staff",      id = "rbxassetid://13284239964" },
+	{ name = "CC",         id = "rbxassetid://14308515186" },
+}
+
+local activeBannerId  = nil
+local bannerWatchConn = nil
+
+local function getBannerImage()
+	local ok, bi = pcall(function() return workspace[player.Name].StreetTag.BaseImage end)
+	return (ok and bi) or nil
+end
+
+local function applyBanner(assetId)
+	activeBannerId = assetId
+	local baseImage = getBannerImage()
+	if not baseImage then
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "StreetTag not found", Duration = 3, Icon = "flame" })
+		return
+	end
+	pcall(function() baseImage.Texture = assetId end)
+	pcall(function() baseImage.Image   = assetId end)
+	pcall(function() baseImage.Value   = assetId end)
+
+	-- Watch for the game resetting the banner — throttled to every 2 s
+	if bannerWatchConn then bannerWatchConn:Disconnect() end
+	local bannerTimer = 0
+	bannerWatchConn = RunService.Heartbeat:Connect(function(dt)
+		if not activeBannerId then bannerWatchConn:Disconnect(); return end
+		bannerTimer = bannerTimer + dt
+		if bannerTimer < 2 then return end
+		bannerTimer = 0
+		local bi = getBannerImage()
+		if not bi then return end
+		local cur = ""; pcall(function() cur = bi.Texture end)
+		if cur ~= activeBannerId then
+			pcall(function() bi.Texture = activeBannerId end)
+			pcall(function() bi.Image   = activeBannerId end)
+			pcall(function() bi.Value   = activeBannerId end)
+		end
+	end)
+end
+
+local function removeBanner()
+	activeBannerId = nil
+	if bannerWatchConn then bannerWatchConn:Disconnect(); bannerWatchConn = nil end
+	local baseImage = getBannerImage()
+	if baseImage then
+		pcall(function() baseImage.Texture = "" end)
+		pcall(function() baseImage.Image   = "" end)
+		pcall(function() baseImage.Value   = "" end)
+	end
+end
+
+player.CharacterAdded:Connect(function()
+	task.wait(2)
+	if activeBannerId then applyBanner(activeBannerId) end
+end)
+
+local INF_BANDANA_ID        = "rbxassetid://13604810806"
+local bandanaActive         = false
+local bandanaWatchConn      = nil
+local originalPantsTemplate = ""
+
+local function getPants()
+	local username = player.Name
+	local ok, pants = pcall(function() return workspace[username].PANTS_STARTERGrayJeans end)
+	if ok and pants then return pants end
+	return nil
+end
+
+local function applyInfBandana()
+	local pants = getPants()
+	if not pants then
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Pants not found", Duration = 3, Icon = "flame" })
+		return false
+	end
+	if originalPantsTemplate == "" then
+		originalPantsTemplate = pants.PantsTemplate
+	end
+	pants.PantsTemplate = INF_BANDANA_ID
+	if bandanaWatchConn then bandanaWatchConn:Disconnect() end
+	bandanaWatchConn = pants:GetPropertyChangedSignal("PantsTemplate"):Connect(function()
+		if bandanaActive and pants.PantsTemplate ~= INF_BANDANA_ID then
+			pants.PantsTemplate = INF_BANDANA_ID
+		end
+	end)
+	return true
+end
+
+local function removeInfBandana()
+	bandanaActive = false
+	if bandanaWatchConn then bandanaWatchConn:Disconnect(); bandanaWatchConn = nil end
+	local pants = getPants()
+	if pants and originalPantsTemplate ~= "" then
+		pants.PantsTemplate = originalPantsTemplate
+	end
+	originalPantsTemplate = ""
+end
+
+player.CharacterAdded:Connect(function()
+	task.wait(2)
+	originalPantsTemplate = ""
+	if bandanaActive then applyInfBandana() end
+end)
+
+local shaderObjects  = {}
+local shaderSkyColor = Color3.fromRGB(180, 210, 255)
+
+local function removeShaders()
+	for _, obj in ipairs(shaderObjects) do pcall(function() obj:Destroy() end) end
+	shaderObjects = {}
+end
+
+local function removeAllStickyZones() stickyHeadZones = {} end
+
+-- ── Sticky Head (obi_stick v2) ────────────────────────────────────────────────
+local function stickyClosestPlayer()
+	local nearest
+	local dist = stickyHeadSize
+	for _, p in pairs(Players:GetPlayers()) do
+		if p ~= player and p.Character then
+			local phrp = p.Character:FindFirstChild("HumanoidRootPart")
+			local phum = p.Character:FindFirstChild("Humanoid")
+			if phrp and phum and phum.Health > 0 then
+				local d = (phrp.Position - hrp.Position).Magnitude
+				if d < dist then dist = d; nearest = p end
+			end
+		end
+	end
+	return nearest
+end
+
+RunService.RenderStepped:Connect(function(dt)
+	if not stickyHeadEnabled or not hrp or not hum then return end
+	local target = stickyClosestPlayer()
+	if not target or not target.Character then return end
+	local head = target.Character:FindFirstChild("Head")
+	if not head then return end
+
+	if hum.FloorMaterial == Enum.Material.Air then
+		local headPos = head.Position + Vector3.new(0, 1.6, 0)
+		local offset  = headPos - hrp.Position
+		local dist    = offset.Magnitude
+		local vel     = hrp.AssemblyLinearVelocity
+
+		local flatTarget = Vector3.new(headPos.X, hrp.Position.Y, headPos.Z)
+		local targetCF   = CFrame.lookAt(hrp.Position, flatTarget)
+		local alpha      = math.clamp(rotationSmoothness * 60 * dt, 0, 1)
+		hrp.CFrame       = hrp.CFrame:Lerp(targetCF, alpha)
+
+		if dist > 2.5 then
+			local multiplier     = stickyPullStrength * 18
+			local desired        = offset.Unit * multiplier
+			local targetVelocity = Vector3.new(desired.X, vel.Y, desired.Z)
+			hrp.AssemblyLinearVelocity = vel:Lerp(targetVelocity, airControlSmoothing)
+		end
+
+		if dist <= 3 then
+			local centerDir  = headPos - hrp.Position
+			local horizontal = Vector3.new(centerDir.X, 0, centerDir.Z)
+			if horizontal.Magnitude > 0 then
+				local added = horizontal.Unit * (stickyStickiness * 5)
+				hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity:Lerp(
+					hrp.AssemblyLinearVelocity + added, 0.12)
+			end
+		end
+
+		if dist <= 2 then
+			local boostOffset = headPos - hrp.Position
+			local boostVel = Vector3.new(
+				boostOffset.X * (stickyStickiness * 5),
+				hrp.AssemblyLinearVelocity.Y,
+				boostOffset.Z * (stickyStickiness * 5)
+			)
+			hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity:Lerp(boostVel, 0.18)
+		end
+
+		if dist <= 1.2 then
+			local lock = headPos - hrp.Position
+			local lockVel = Vector3.new(
+				lock.X * (stickyStickiness * 6),
+				hrp.AssemblyLinearVelocity.Y,
+				lock.Z * (stickyStickiness * 6)
+			)
+			hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity:Lerp(lockVel, 0.15)
+		end
+	end
+end)
+
+WindUI = loadstring(game:HttpGet(
+	"https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
+))()
+
+WindUI:AddTheme({
+	Name = "Nexus",
+	Background = WindUI:Gradient({ ["0"] = { Color = Color3.fromHex("#ffa500"), Transparency = 0 }, ["100"] = { Color = Color3.fromHex("#dc2626"), Transparency = 0 } }, { Rotation = 135 }),
+	Section    = WindUI:Gradient({ ["0"] = { Color = Color3.fromHex("#991b1b"), Transparency = 0 }, ["100"] = { Color = Color3.fromHex("#991b1b"), Transparency = 0 } }, { Rotation = 90  }),
+	Accent     = WindUI:Gradient({ ["0"] = { Color = Color3.fromHex("#ff3b30"), Transparency = 0 }, ["100"] = { Color = Color3.fromHex("#ff6b35"), Transparency = 0 } }, { Rotation = 0   }),
+	Button     = WindUI:Gradient({ ["0"] = { Color = Color3.fromHex("#ef4444"), Transparency = 0 }, ["100"] = { Color = Color3.fromHex("#f87171"), Transparency = 0 } }, { Rotation = 0   }),
+	Toggle     = WindUI:Gradient({ ["0"] = { Color = Color3.fromHex("#ff3b30"), Transparency = 0 }, ["100"] = { Color = Color3.fromHex("#ff6b35"), Transparency = 0 } }, { Rotation = 0   }),
+	Text       = WindUI:Gradient({ ["0"] = { Color = Color3.fromHex("#ffffff"), Transparency = 0 }, ["100"] = { Color = Color3.fromHex("#ffffff"), Transparency = 0 } }, { Rotation = 0   }),
+	Icon       = WindUI:Gradient({ ["0"] = { Color = Color3.fromHex("#ffffff"), Transparency = 0 }, ["100"] = { Color = Color3.fromHex("#ffffff"), Transparency = 0 } }, { Rotation = 0   }),
+})
+
+local Window = WindUI:CreateWindow({
+	Title       = "Obzervable Hub",
+	Icon        = "flame",
+	Author      = "Football Universe",
+	Folder      = "NexusHub",
+	Size        = UDim2.fromOffset(580, 460),
+	Transparent = true,
+	Theme       = "Nexus",
+	User        = { Enabled = true, Anonymous = false },
+})
+
+Window:Tag({
+	Title  = "v1.3.0",
+	Icon   = "flame",
+	Color  = Color3.fromHex("#60a5fa"),
+	Radius = 4,
+})
+
+local ConfigManager = Window.ConfigManager
+local cfg = ConfigManager:CreateConfig("nexus_config")
+
+UIS.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.KeyCode == Enum.KeyCode.M then Window:Toggle() end
+end)
+
+local boostKey   = Enum.KeyCode.LeftShift
+local pullVecKey = Enum.KeyCode.Unknown
+local magsKey    = Enum.KeyCode.Unknown
+local ctrlBoost   = Enum.KeyCode.ButtonL1
+local ctrlRocket  = Enum.KeyCode.DPadLeft
+local ctrlPullVec = Enum.KeyCode.ButtonR2
+local ctrlMags    = Enum.KeyCode.ButtonL2
+
+local CTRL_BUTTONS = {
+	"ButtonA", "ButtonB", "ButtonX", "ButtonY",
+	"ButtonL1", "ButtonR1", "ButtonL2", "ButtonR2",
+	"DPadUp", "DPadDown", "DPadLeft", "DPadRight",
+	"ButtonSelect", "ButtonStart",
+}
+
+local function toKeyCode(str)
+	local ok, kc = pcall(function() return Enum.KeyCode[str] end)
+	return (ok and kc) or Enum.KeyCode.Unknown
+end
+
+local Tabs = {
+	Movement = Window:Tab({ Title = "Movement", Icon = "person-standing"    }),
+	Boost    = Window:Tab({ Title = "Boost",    Icon = "rocket"             }),
+	Catching = Window:Tab({ Title = "Catching", Icon = "target"             }),
+	Hitbox   = Window:Tab({ Title = "Hitbox",   Icon = "box"                }),
+	Wager    = Window:Tab({ Title = "Wager",    Icon = "trophy"             }),
+	Emotes   = Window:Tab({ Title = "Emotes",   Icon = "music"              }),
+	Items    = Window:Tab({ Title = "Items",    Icon = "shirt"              }),
+	Clothes  = Window:Tab({ Title = "Clothes",  Icon = "shopping-bag"       }),
+	Shaders  = Window:Tab({ Title = "Shaders",  Icon = "sparkles"           }),
+	Graphics = Window:Tab({ Title = "Graphics", Icon = "monitor"            }),
+	Keybinds = Window:Tab({ Title = "Keybinds", Icon = "keyboard"           }),
+	Namelock = Window:Tab({ Title = "Name Lock",Icon = "lock"               }),
+	Settings = Window:Tab({ Title = "Settings", Icon = "sliders-horizontal" }),
+}
+
+Tabs.Movement:Select()
+
+Tabs.Movement:Section({ Title = "Speed" })
+Tabs.Movement:Slider({
+	Title = "WalkSpeed", Flag = "WalkSpeed",
+	Step = 1, Value = { Min = 1, Max = maxWalkSpeed, Default = walkSpeed },
+	Callback = function(v) walkSpeed = v; if hum and not rocketActive then hum.WalkSpeed = walkSpeed end end,
+})
+Tabs.Movement:Toggle({
+	Title = "WalkSpeed Lock",
+	Flag = "WalkSpeedLock", Value = true,
+	Callback = function(v)
+		walkSpeedLock = v
+		if v and hum and not rocketActive then hum.WalkSpeed = walkSpeed end
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "WalkSpeed locked" or "WalkSpeed unlocked", Duration = 2, Icon = v and "lock" or "unlock" })
+	end,
+})
+Tabs.Movement:Section({ Title = "Physics" })
+Tabs.Movement:Slider({
+	Title = "Gravity", Flag = "Gravity",
+	Step = 1, Value = { Min = 10, Max = gravityMax, Default = gravityValue },
+	Callback = function(v) gravityValue = v; Workspace.Gravity = gravityValue end,
+})
+Tabs.Boost:Slider({
+	Title = "Boost Power", Flag = "BoostPower",
+	Step = 1, Value = { Min = 1, Max = maxBoost, Default = boostPower },
+	Callback = function(v) boostPower = v end,
+})
+Tabs.Movement:Slider({
+	Title = "Dive Power", Flag = "DivePower",
+	Step = 1, Value = { Min = 10, Max = 200, Default = divePower },
+	Callback = function(v) divePower = v; updateDivePower(v) end,
+})
+Tabs.Movement:Section({ Title = "Actions" })
+Tabs.Boost:Button({
+	Title = "Rocket Boost", Desc = "DPad ← by default  |  Instant burst of speed",
+	Callback = function()
+		rocketBoost()
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Rocket Boost!", Duration = 1 })
+	end,
+})
+Tabs.Movement:Section({ Title = "Follow" })
+Tabs.Movement:Button({
+	Title = "Toggle Follow", Desc = "Follows the nearest player — press F or DPad → to toggle",
+	Callback = function() toggleFollow() end,
+})
+Tabs.Movement:Dropdown({
+	Title = "Follow Controller Button",
+	Values = CTRL_BUTTONS, Value = "DPadRight",
+	Callback = function(v) ctrlFollow = toKeyCode(v) end,
+})
+Tabs.Movement:Section({ Title = "Boost Amplifier" })
+Tabs.Boost:Toggle({
+	Title = "TTB Amplifier",
+	Flag = "BoostAmp", Value = false,
+	Callback = function(v)
+		boostAmpEnabled = v
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "TTB Amplifier on" or "TTB Amplifier off", Duration = 2 })
+	end,
+})
+Tabs.Boost:Slider({
+	Title = "TTB Multiplier",
+	Flag = "BoostAmpMult", Step = 0.5,
+	Value = { Min = 1.5, Max = 10, Default = 2 },
+	Callback = function(v) boostAmpMultiplier = v end,
+})
+Tabs.Boost:Section({ Title = "Fling" })
+Tabs.Boost:Toggle({
+	Title = "Fling",
+	Flag = "Fling", Value = false,
+	Callback = function(v)
+		flingEnabled = v
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Fling on" or "Fling off", Duration = 2 })
+	end,
+})
+Tabs.Boost:Slider({
+	Title = "Fling Power",
+	Flag = "FlingPower", Step = 5, Value = { Min = 50, Max = 500, Default = flingPower },
+	Callback = function(v) flingPower = v end,
+})
+Tabs.Boost:Section({ Title = "Auto Boost" })
+Tabs.Boost:Toggle({
+	Title = "Auto Boost",
+	Flag = "AutoBoost", Value = false,
+	Callback = function(v)
+		autoBoostEnabled = v
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Auto Boost on" or "Auto Boost off", Duration = 2 })
+	end,
+})
+Tabs.Boost:Section({ Title = "Fling Up Boost" })
+Tabs.Boost:Toggle({
+	Title = "Fling Up Boost",
+	Flag = "FlingUpBoost", Value = false,
+	Callback = function(v)
+		flingUpEnabled = v
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Fling Up Boost on" or "Fling Up Boost off", Duration = 2 })
+	end,
+})
+
+Tabs.Catching:Section({ Title = "Pull Vector" })
+Tabs.Catching:Toggle({
+	Title = "Pull Vec",
+	Flag = "PullVec", Value = false,
+	Callback = function(v)
+		pullVecEnabled = v
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Pull Vec on — hold RT / RMB" or "Pull Vec off", Duration = 2 })
+	end,
+})
+Tabs.Catching:Section({ Title = "Tuning" })
+Tabs.Catching:Slider({
+	Title = "Pull Speed", Flag = "PullSpeed",
+	Step = 0.1, Value = { Min = 10, Max = 500, Default = pullVecStrength },
+	Callback = function(v) pullVecStrength = v end,
+})
+Tabs.Catching:Slider({
+	Title = "Pull Smoothness", Flag = "PullSmooth",
+	Step = 0.1, Value = { Min = 0.1, Max = 0.9, Default = pullVecSmooth },
+	Callback = function(v) pullVecSmooth = v end,
+})
+Tabs.Catching:Section({ Title = "Mags" })
+Tabs.Catching:Toggle({
+	Title = "CFrame Mags",
+	Flag = "CfMags", Value = false,
+	Callback = function(v)
+		cfMagsEnabled = v
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "CFrame Mags on — hold LMB" or "CFrame Mags off", Duration = 2 })
+	end,
+})
+Tabs.Catching:Toggle({
+	Title = "Orb Mags",
+	Flag = "OrbMags", Value = false,
+	Callback = function(v)
+		orbMagsEnabled = v
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Orb Mags on" or "Orb Mags off", Duration = 2 })
+	end,
+})
+Tabs.Catching:Section({ Title = "Pull Orb" })
+Tabs.Catching:Toggle({
+	Title = "Enable Pull Orb",
+	Flag = "OrbEnabled", Value = false,
+	Callback = function(v)
+		orbEnabled = v
+		if not v and orbPart and orbPart.Parent then orbPart:Destroy(); orbPart = nil end
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Pull Orb active" or "Pull Orb off", Duration = 2 })
+	end,
+})
+Tabs.Catching:Slider({
+	Title = "Orb Radius", Flag = "OrbRadius",
+	Step = 1, Value = { Min = 5, Max = 100, Default = orbRadius },
+	Callback = function(v) orbRadius = v end,
+})
+Tabs.Catching:Colorpicker({
+	Title = "Orb Colour", Default = orbColor,
+	Callback = function(color) orbColor = color; if orbPart then orbPart.Default = color end end,
+})
+Tabs.Catching:Slider({
+	Title = "Orb Transparency", Flag = "OrbTransparency",
+	Step = 1, Value = { Min = 0, Max = 10, Default = math.floor(orbTransparency * 10) },
+	Callback = function(v) orbTransparency = v / 10; if orbPart then orbPart.Transparency = orbTransparency end end,
+})
+
+-- ── Wager Tab ─────────────────────────────────────────────────────────────────
+Tabs.Wager:Section({ Title = "Head Manipulation" })
+Tabs.Wager:Toggle({
+	Title = "Head Manipulation", Desc = "Steers you horizontally toward nearest head when descending from a jump",
+	Flag = "HeadManip", Value = false,
+	Callback = function(v)
+		headManipEnabled = v
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Head Manip on" or "Head Manip off", Duration = 2, Icon = "user" })
+	end,
+})
+Tabs.Wager:Slider({
+	Title = "Head Strength", Desc = "How hard you get steered toward the head",
+	Flag = "HeadStrength", Step = 0.1, Value = { Min = 0.5, Max = 6, Default = headStrength },
+	Callback = function(v) headStrength = v end,
+})
+Tabs.Wager:Section({ Title = "Jump Pull Vec" })
+Tabs.Wager:Toggle({
+	Title = "Jump Pull Vec", Desc = "Auto-holds pull vec while you are airborne — no button needed",
+	Flag = "JumpPull", Value = false,
+	Callback = function(v)
+		jumpPullEnabled = v
+		if not v then jumpPullActive = false; pullVecHeld = false end
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Jump Pull on" or "Jump Pull off", Duration = 2, Icon = "arrow-up" })
+	end,
+})
+Tabs.Wager:Paragraph({
+	Title   = "Jump Pull Vec note",
+	Content = "Pull Vec must also be enabled in the Catching tab. This just removes the need to hold the button — it activates automatically when you leave the ground.",
+})
+Tabs.Wager:Section({ Title = "Ball Manipulation" })
+Tabs.Wager:Toggle({
+	Title = "Ball Magnet", Desc = "Pulls the ball toward your hand with jitter effect",
+	Flag = "BallMag", Value = false,
+	Callback = function(v)
+		ballMagEnabled = v
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Ball Magnet on" or "Ball Magnet off", Duration = 2, Icon = "magnet" })
+	end,
+})
+Tabs.Wager:Toggle({
+	Title = "Range Boost", Desc = "Boosts ball speed when you are within range",
+	Flag = "BallRangeBoost", Value = false,
+	Callback = function(v)
+		ballRangeEnabled = v
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Range Boost on" or "Range Boost off", Duration = 2, Icon = "zap" })
+	end,
+})
+Tabs.Wager:Slider({
+	Title = "Magnet Range", Desc = "Max distance to activate the magnet",
+	Flag = "BallMagRange", Step = 1, Value = { Min = 5, Max = 200, Default = ballMagRange },
+	Callback = function(v) ballMagRange = v end,
+})
+Tabs.Wager:Slider({
+	Title = "Speed Range", Desc = "Distance within which ball gets boosted speed",
+	Flag = "BallSpeedRange", Step = 1, Value = { Min = 5, Max = 200, Default = ballSpeedRange },
+	Callback = function(v) ballSpeedRange = v end,
+})
+Tabs.Wager:Slider({
+	Title = "Boosted Speed", Desc = "Ball speed when inside range",
+	Flag = "BallBoostedSpeed", Step = 1, Value = { Min = 1, Max = 9999, Default = ballBoostedSpeed },
+	Callback = function(v) ballBoostedSpeed = v end,
+})
+Tabs.Wager:Slider({
+	Title = "Pull Strength", Desc = "How hard the ball flies toward your hand",
+	Flag = "BallPullStr", Step = 1, Value = { Min = 10, Max = 500, Default = ballPullStrength },
+	Callback = function(v) ballPullStrength = v end,
+})
+Tabs.Wager:Slider({
+	Title = "Jitter Amplitude", Desc = "How wild the shake is while pulling",
+	Flag = "BallJitterAmp", Step = 1, Value = { Min = 0, Max = 50, Default = ballJitterAmp },
+	Callback = function(v) ballJitterAmp = v end,
+})
+Tabs.Wager:Slider({
+	Title = "Jitter Frequency", Desc = "How frantic the oscillations are",
+	Flag = "BallJitterFreq", Step = 1, Value = { Min = 1, Max = 60, Default = ballJitterFreq },
+	Callback = function(v) ballJitterFreq = v end,
+})
+Tabs.Wager:Slider({
+	Title = "Snap Distance", Desc = "Studs from hand at which ball locks cleanly",
+	Flag = "BallSnapDist", Step = 0.1, Value = { Min = 0.5, Max = 5, Default = ballSnapDist },
+	Callback = function(v) ballSnapDist = v end,
+})
+-- ─────────────────────────────────────────────────────────────────────────────
+
+Tabs.Hitbox:Section({ Title = "Navigation" })
+Tabs.Catching:Button({
+	Title = "Teleport to Ball", Desc = "Instantly moves you to the football",
+	Callback = function()
+		if not hrp then return end
+		local nearest, nearestDist = nil, math.huge
+		for _, obj in pairs(workspace:GetDescendants()) do
+			if obj.Title == "Football" and obj:IsA("BasePart") then
+				local dist = (obj.Position - hrp.Position).Magnitude
+				if dist < nearestDist then nearest = obj; nearestDist = dist end
+			end
+		end
+		if nearest then
+			hrp.CFrame = CFrame.new(nearest.Position + Vector3.new(0, 5, 0))
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Teleported to ball", Duration = 2 })
+		else
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "No ball found", Duration = 2, Icon = "flame" })
+		end
+	end,
+})
+Tabs.Hitbox:Toggle({
+	Title = "Noclip", Flag = "Noclip", Value = false,
+	Callback = function(v)
+		noclipEnabled = v
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Noclip on" or "Noclip off", Duration = 2 })
+	end,
+})
+Tabs.Hitbox:Section({ Title = "Hitbox" })
+Tabs.Hitbox:Toggle({
+	Title = "Expand Player Hitboxes",
+	Flag = "Hitbox", Value = false,
+	Callback = function(v) hitboxEnabled = v; refreshAllHitboxes(); WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Hitboxes expanded" or "Hitboxes restored", Duration = 2 }) end,
+})
+Tabs.Hitbox:Slider({
+	Title = "Hitbox Size", Flag = "HitboxSize",
+	Step = 0.5, Value = { Min = 1, Max = 10, Default = hitboxSize },
+	Callback = function(v) hitboxSize = v; if hitboxEnabled then refreshAllHitboxes() end end,
+})
+Tabs.Hitbox:Slider({
+	Title = "Hitbox Transparency", Flag = "HitboxTransp",
+	Step = 0.1, Value = { Min = 0, Max = 1, Default = hitboxTransparency },
+	Callback = function(v) hitboxTransparency = v; if hitboxEnabled then refreshAllHitboxes() end end,
+})
+Tabs.Catching:Section({ Title = "Gloves / Ball tp" })
+Tabs.Catching:Toggle({
+	Title = "Gloves V2",
+	Flag = "Gloves", Value = false,
+	Callback = function(v)
+		glovesEnabled = v
+		if v then applyGloves() else removeGloves() end
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Gloves on" or "Gloves off", Duration = 2 })
+	end,
+})
+Tabs.Catching:Slider({
+	Title = "Glove Size", Flag = "GloveSize",
+	Step = 0.5, Value = { Min = 2, Max = 12, Default = gloveSize },
+	Callback = function(v) gloveSize = v; if glovesEnabled then applyGloves() end end,
+})
+Tabs.Catching:Toggle({
+	Title = "Invisible Gloves",
+	Flag = "GlovesInvis", Value = false,
+	Callback = function(v) glovesInvisible = v; if glovesEnabled then applyGloves() end end,
+})
+Tabs.Hitbox:Section({ Title = "Sticky Head" })
+Tabs.Hitbox:Toggle({
+	Title = "Sticky Head",
+	Flag = "StickyHead", Value = false,
+	Callback = function(v)
+		stickyHeadEnabled = v
+		if not v then removeAllStickyZones() end
+		if stickyHeadNotifs then
+			WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Sticky Head on" or "Sticky Head off", Duration = 2 })
+		end
+	end,
+})
+Tabs.Hitbox:Toggle({
+	Title = "Sticky Head Notifications",
+	Flag = "StickyHeadNotifs", Value = true,
+	Callback = function(v) stickyHeadNotifs = v end,
+})
+Tabs.Hitbox:Slider({
+	Title = "Sticky Search Range",
+	Flag = "StickyHeadSize", Step = 1, Value = { Min = 5, Max = 80, Default = stickyHeadSize },
+	Callback = function(v) stickyHeadSize = v end,
+})
+Tabs.Hitbox:Slider({
+	Title = "Pull Strength",
+	Flag = "StickyPull", Step = 1, Value = { Min = 10, Max = 40, Default = math.floor(stickyPullStrength * 10) },
+	Callback = function(v) stickyPullStrength = v / 10 end,
+})
+Tabs.Hitbox:Slider({
+	Title = "Stickiness",
+	Flag = "StickyStick", Step = 1, Value = { Min = 10, Max = 40, Default = math.floor(stickyStickiness * 10) },
+	Callback = function(v) stickyStickiness = v / 10 end,
+})
+Tabs.Hitbox:Slider({
+	Title = "Rotation Smoothness",
+	Flag = "StickyRotSmooth", Step = 1, Value = { Min = 1, Max = 20, Default = math.floor(rotationSmoothness * 100) },
+	Callback = function(v) rotationSmoothness = v / 100 end,
+})
+Tabs.Hitbox:Slider({
+	Title = "Air Control Smoothing",
+	Flag = "StickyAirSmooth", Step = 1, Value = { Min = 1, Max = 30, Default = math.floor(airControlSmoothing * 100) },
+	Callback = function(v) airControlSmoothing = v / 100 end,
+})
+Tabs.Hitbox:Section({ Title = "Performance" })
+Tabs.Hitbox:Paragraph({
+	Title   = "Graphics moved",
+	Content = "Potato Graphics and other visual options are now in the Graphics tab.",
+})
+
+local greyPlayersEnabled   = false
+local pixelFacesEnabled    = false
+local originalFaceIds      = {}
+
+local function applyPixelFaces()
+	pcall(function() settings():GetService("Studio") end)
+	pcall(function() UserSettings():GetService("UserGameSettings").SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel01 end)
+	pcall(function() game:GetService("ContentProvider"):SetThreadPool(1) end)
+	for _, plr in pairs(Players:GetPlayers()) do
+		local c = plr.Character
+		if not c then continue end
+		local head = c:FindFirstChild("Head")
+		if not head then continue end
+		local face = head:FindFirstChild("face")
+		if face and face:IsA("Decal") then
+			if not originalFaceIds[plr.UserId] then originalFaceIds[plr.UserId] = face.Texture end
+			local stored = face.Texture
+			face.Texture = ""
+			task.defer(function() if face and face.Parent then face.Texture = stored end end)
+		end
+	end
+	pcall(function() game:GetService("RenderSettings").QualityLevel = Enum.QualityLevel.Level01 end)
+end
+
+local function removePixelFaces()
+	for _, plr in pairs(Players:GetPlayers()) do
+		local c = plr.Character
+		if not c or not originalFaceIds[plr.UserId] then continue end
+		local head = c:FindFirstChild("Head")
+		if not head then continue end
+		local face = head:FindFirstChild("face")
+		if face and originalFaceIds[plr.UserId] ~= "NONE" then face.Texture = originalFaceIds[plr.UserId] end
+	end
+	originalFaceIds = {}
+end
+
+local function applyFFlags(flags)
+	for name, value in pairs(flags) do
+		pcall(function() game:GetService("RbxAnalyticsService"):SetRBXEventStream(name, tostring(value)) end)
+		pcall(function() settings()[name] = value end)
+	end
+end
+
+local FFLAG_PRESETS = {
+	["Max FPS Boost"] = {
+		FFlagDebugDisableTelemetry = true,
+		DFIntTaskSchedulerTargetFps = 9999,
+		FFlagRenderGrassMotion = false,
+		FFlagRenderShadowIntensity = false,
+	},
+	["Low Quality Rendering"] = {
+		FFlagCommitToGraphicsQualityFix = true,
+		FFlagFixGraphicsQuality = true,
+		DFIntDebugFRMQualityLevelOverride = 1,
+	},
+	["Disable Shadows"] = {
+		FFlagDebugForceFastGBuffer = false,
+		DFFlagDebugRenderForceTechnologyVoxel = true,
+	},
+}
+
+Players.PlayerAdded:Connect(function(plr)
+	plr.CharacterAdded:Connect(function()
+		task.wait(1)
+		if pixelFacesEnabled then applyPixelFaces() end
+	end)
+end)
+
+Tabs.Graphics:Section({ Title = "Player Visuals" })
+Tabs.Graphics:Toggle({
+	Title = "Pixel Faces",
+	Flag = "PixelFaces", Value = false,
+	Callback = function(v)
+		pixelFacesEnabled = v
+		if v then applyPixelFaces() else removePixelFaces() end
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Pixel Faces on" or "Pixel Faces off", Duration = 2 })
+	end,
+})
+Tabs.Graphics:Section({ Title = "FastFlag Launcher" })
+Tabs.Graphics:Paragraph({
+	Title   = "Presets",
+	Content = "Click a preset to apply it instantly.",
+})
+local presetNames = {}
+for name in pairs(FFLAG_PRESETS) do table.insert(presetNames, name) end
+table.sort(presetNames)
+for _, name in ipairs(presetNames) do
+	Tabs.Graphics:Button({
+		Title = name,
+		Callback = function()
+			applyFFlags(FFLAG_PRESETS[name])
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Applied: " .. name, Duration = 2 })
+		end,
+	})
+end
+local fflagInput = ""
+Tabs.Graphics:Input({
+	Title = "Custom FFlags", Desc = 'Paste JSON e.g. {"FFlagName":true,"DFIntName":1}',
+	Placeholder = '{"FFlagExample":true}', Callback = function(v) fflagInput = v end,
+})
+Tabs.Graphics:Button({
+	Title = "Apply Custom FFlags",
+	Callback = function()
+		if fflagInput == "" then
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Paste flags first", Duration = 2 })
+			return
+		end
+		local ok, flags = pcall(function()
+			return game:GetService("HttpService"):JSONDecode(fflagInput)
+		end)
+		if not ok or type(flags) ~= "table" then
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Invalid JSON", Duration = 2, Icon = "flame" })
+			return
+		end
+		applyFFlags(flags)
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "FFlags applied", Duration = 2, Icon = "flame" })
+	end,
+})
+Tabs.Graphics:Section({ Title = "Performance" })
+Tabs.Graphics:Toggle({
+	Title = "Potato Graphics",
+	Flag = "PotatoGraphics2", Value = false,
+	Callback = function(v)
+		potatoEnabled = v
+		if v then applyPotato() else removePotato() end
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Potato Graphics on" or "Potato Graphics off", Duration = 2, Icon = v and "cpu" or "monitor" })
+	end,
+})
+
+Tabs.Emotes:Section({ Title = "Search" })
+Tabs.Emotes:Input({
+	Title = "Search & Play", Desc = "Type an emote name and press Enter to play it",
+	Placeholder = "e.g. BBS", Callback = function(v)
+		if not v or v == "" then return end
+		local query = v:lower():gsub("%s+", "")
+		for _, emote in ipairs(EMOTES) do
+			if emote.name:lower():gsub("%s+",""):find(query, 1, true) then
+				playEmote(emote.id, emote.speed)
+				WindUI:Notify({ Title = "Obzervable Hub", Content = "Playing: " .. emote.name, Duration = 2 })
+				return
+			end
+		end
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "No emote found: " .. v, Duration = 2, Icon = "flame" })
+	end,
+})
+Tabs.Emotes:Section({ Title = "Emotes" })
+for _, emote in ipairs(EMOTES) do
+	Tabs.Emotes:Button({
+		Title = emote.name,
+		Callback = function()
+			playEmote(emote.id, emote.speed)
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Playing: " .. emote.name, Duration = 2 })
+		end,
+	})
+end
+Tabs.Emotes:Section({ Title = "Playback" })
+Tabs.Emotes:Slider({
+	Title = "Emote Speed",
+	Step = 1, Value = { Min = 1, Max = 30, Default = 10 },
+	Callback = function(v)
+		local speed = v / 10
+		if currentAnimTrack then currentAnimTrack:AdjustSpeed(speed) end
+	end,
+})
+Tabs.Emotes:Button({
+	Title = "Stop Emote", Desc = "Stop the currently playing emote",
+	Callback = function()
+		stopEmote()
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Emote stopped", Duration = 2 })
+	end,
+})
+Tabs.Emotes:Section({ Title = "Custom" })
+local customAnimId = ""
+Tabs.Emotes:Input({
+	Title = "Animation ID", Desc = "Enter a numeric Roblox animation ID",
+	Placeholder = "e.g. 10714364213", Callback = function(v) customAnimId = v end,
+})
+Tabs.Emotes:Button({
+	Title = "Play Custom",
+	Callback = function()
+		if customAnimId == "" then
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Enter an animation ID first", Duration = 2 })
+			return
+		end
+		playEmote("rbxassetid://" .. customAnimId, 1)
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Playing custom animation", Duration = 2, Icon = "flame" })
+	end,
+})
+
+Tabs.Items:Section({ Title = "Accessories" })
+local sortedItemNames = {}
+for k in pairs(ITEMS) do table.insert(sortedItemNames, k) end
+table.sort(sortedItemNames)
+for _, itemName in ipairs(sortedItemNames) do
+	Tabs.Items:Toggle({
+		Title = itemName, Value = false,
+		Callback = function(v)
+			if v then
+				equipItem(itemName)
+				WindUI:Notify({ Title = "Obzervable Hub", Content = "Equipped: " .. itemName, Duration = 2 })
+			else
+				unequipItem(itemName)
+				WindUI:Notify({ Title = "Obzervable Hub", Content = "Unequipped: " .. itemName, Duration = 2, Icon = "flame" })
+			end
+		end,
+	})
+end
+Tabs.Items:Button({
+	Title = "Unequip All", Desc = "Remove every equipped accessory",
+	Callback = function()
+		for name in pairs(ITEMS) do unequipItem(name) end
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "All items removed", Duration = 2 })
+	end,
+})
+Tabs.Items:Section({ Title = "Banners" })
+for _, banner in ipairs(BANNERS) do
+	Tabs.Items:Button({
+		Title = banner.name,
+		Callback = function()
+			applyBanner(banner.id)
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Banner: " .. banner.name, Duration = 2 })
+		end,
+	})
+end
+Tabs.Items:Button({
+	Title = "Clear Banner", Desc = "Removes your current banner",
+	Callback = function()
+		removeBanner()
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Banner cleared", Duration = 2 })
+	end,
+})
+
+Tabs.Clothes:Section({ Title = "Outfits" })
+for _, cloth in ipairs(CLOTHES) do
+	Tabs.Clothes:Button({
+		Title = cloth.name,
+		Callback = function()
+			local success = applyCloth(cloth.type, cloth.id)
+			if success then
+				WindUI:Notify({ Title = "Obzervable Hub", Content = "Wearing: " .. cloth.name, Duration = 2 })
+			end
+		end,
+	})
+end
+Tabs.Clothes:Button({
+	Title = "Reset Shirt", Desc = "Restore original shirt",
+	Callback = function()
+		resetCloth("shirt")
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Shirt reset", Duration = 2 })
+	end,
+})
+Tabs.Clothes:Button({
+	Title = "Reset Shorts", Desc = "Restore original pants",
+	Callback = function()
+		resetCloth("pants")
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Pants reset", Duration = 2 })
+	end,
+})
+Tabs.Clothes:Section({ Title = "Cosmetics" })
+Tabs.Clothes:Toggle({
+	Title = "Inf Bandana",
+	Flag = "InfBandana", Value = false,
+	Callback = function(v)
+		bandanaActive = v
+		if v then
+			local success = applyInfBandana()
+			if success then
+				WindUI:Notify({ Title = "Obzervable Hub", Content = "Inf Bandana on", Duration = 2 })
+			else
+				bandanaActive = false
+			end
+		else
+			removeInfBandana()
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Inf Bandana off", Duration = 2, Icon = "flame" })
+		end
+	end,
+})
+
+Tabs.Shaders:Section({ Title = "Sky Presets" })
+Tabs.Shaders:Paragraph({
+	Title   = "Sky Presets",
+	Content = "Pick a preset or enable Loop to cycle through all skies every second.",
+})
+Tabs.Shaders:Toggle({
+	Title = "Loop Skies", Desc = "Automatically cycles through every preset every 1 second",
+	Flag = "SkyLoop", Value = false,
+	Callback = function(v)
+		skyLoopEnabled = v
+		if not v then skyLoopIndex = 1 end
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Sky loop on" or "Sky loop off", Duration = 2, Icon = "sparkles" })
+	end,
+})
+local SKY_PRESETS = {
+	"Default", "Sunset Paradise", "Golden Hour", "Warm Summer",
+	"Pink Dream", "Orange Glow", "Coral Sunset", "Clear Day",
+	"Vaporwave Dream", "Midnight Blue",
+}
+for _, preset in ipairs(SKY_PRESETS) do
+	Tabs.Shaders:Button({
+		Title = preset,
+		Callback = function()
+			ApplySky(preset)
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Sky: " .. preset, Duration = 2, Icon = "cloud" })
+		end,
+	})
+end
+Tabs.Shaders:Section({ Title = "Sky Colour" })
+Tabs.Shaders:Colorpicker({
+	Title = "Sky Colour",
+	Default = shaderSkyColor,
+	Callback = function(color)
+		shaderSkyColor = color
+		local cc   = Lighting:FindFirstChild("NexusCC")
+		local atmo = Lighting:FindFirstChild("NexusAtmo")
+		if cc   then cc.TintColor = color end
+		if atmo then atmo.Default = color end
+		if not atmo then
+			local a = Instance.new("Atmosphere")
+			a.Title = "NexusAtmo"; a.Default = color; a.Density = 0.35
+			a.Offset = 0.1; a.Haze = 1.5; a.Glare = 0.2; a.Parent = Lighting
+			table.insert(shaderObjects, a)
+		end
+		if not cc then
+			local c2 = Instance.new("ColorCorrectionEffect")
+			c2.Title = "NexusCC"; c2.TintColor = color; c2.Parent = Lighting
+			table.insert(shaderObjects, c2)
+		end
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Sky colour updated", Duration = 2 })
+	end,
+})
+Tabs.Shaders:Section({ Title = "Shadows" })
+Tabs.Shaders:Toggle({
+	Title = "Global Shadows",
+	Value = Lighting.GlobalShadows,
+	Callback = function(v)
+		Lighting.GlobalShadows = v
+		WindUI:Notify({ Title = "Obzervable Hub", Content = v and "Shadows on" or "Shadows off", Duration = 2 })
+	end,
+})
+Tabs.Shaders:Slider({
+	Title = "Shadow Softness",
+	Step = 1, Value = { Min = 0, Max = 10, Default = math.floor(Lighting.ShadowSoftness * 10) },
+	Callback = function(v) Lighting.ShadowSoftness = v / 10 end,
+})
+
+Tabs.Keybinds:Section({ Title = "Keyboard" })
+Tabs.Keybinds:Keybind({
+	Title = "Boost Jump",
+	Flag = "BoostKey", Value = "LeftShift",
+	Callback = function(v) boostKey = toKeyCode(v) end,
+})
+Tabs.Keybinds:Keybind({
+	Title = "Pull Vec Hold",
+	Flag = "PullVecKey", Value = "E",
+	Callback = function(v) pullVecKey = toKeyCode(v) end,
+})
+Tabs.Keybinds:Keybind({
+	Title = "CFrame Mags Hold", Desc = "Hold to activate mags (keyboard only)",
+	Flag = "MagsKey", Value = "Unknown",
+	Callback = function(v) magsKey = toKeyCode(v) end,
+})
+Tabs.Keybinds:Keybind({
+	Title = "Sticky Head Toggle",
+	Flag = "StickyHeadKey", Value = "Unknown",
+	Callback = function(v) stickyHeadKey = toKeyCode(v) end,
+})
+Tabs.Keybinds:Keybind({
+	Title = "Toggle UI",
+	Value = "M",
+	Callback = function(v)
+		local ok, kc = pcall(function() return Enum.KeyCode[v] end)
+		if ok and kc then Window:SetToggleKey(kc) end
+	end,
+})
+Tabs.Keybinds:Section({ Title = "Controller" })
+Tabs.Keybinds:Paragraph({
+	Title   = "Controller Support",
+	Content = "WindUI doesn't detect gamepad inputs for keybinds so remapping is done with dropdowns below.",
+})
+Tabs.Keybinds:Dropdown({
+	Title = "Boost Button",
+	Values = CTRL_BUTTONS, Value = "ButtonL1",
+	Callback = function(v) ctrlBoost = toKeyCode(v); WindUI:Notify({ Title = "Obzervable Hub", Content = "Boost → " .. v, Duration = 2 }) end,
+})
+Tabs.Keybinds:Dropdown({
+	Title = "Rocket Boost Button",
+	Values = CTRL_BUTTONS, Value = "DPadLeft",
+	Callback = function(v) ctrlRocket = toKeyCode(v); WindUI:Notify({ Title = "Obzervable Hub", Content = "Rocket → " .. v, Duration = 2 }) end,
+})
+Tabs.Keybinds:Dropdown({
+	Title = "Pull Vec Button",
+	Values = CTRL_BUTTONS, Value = "ButtonR2",
+	Callback = function(v) ctrlPullVec = toKeyCode(v); WindUI:Notify({ Title = "Obzervable Hub", Content = "Pull Vec → " .. v, Duration = 2 }) end,
+})
+Tabs.Keybinds:Dropdown({
+	Title = "Sticky Head Button",
+	Values = CTRL_BUTTONS, Value = "ButtonR1",
+	Callback = function(v)
+		ctrlStickyHead = toKeyCode(v)
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Sticky Head → " .. v, Duration = 2 })
+	end,
+})
+Tabs.Keybinds:Dropdown({
+	Title = "CFrame Mags Button", Desc = "Hold this controller button to activate mags",
+	Values = CTRL_BUTTONS, Value = "ButtonL2",
+	Callback = function(v)
+		ctrlMags = toKeyCode(v)
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Mags → " .. v, Duration = 2 })
+	end,
+})
+
+local nlLatched    = nil
+local nlLatchType  = nil
+local nlLockConn   = nil
+local nlWatchConn  = nil
+local nlAddedConns = {}
+local nlIsLocked   = false
+local nlFakeName   = ""
+local nlRealInput  = ""
+local nlFakeInput  = ""
+
+local function nlEnforce()
+	if not nlLatched or nlFakeName == "" then return end
+	if nlLatchType == "Text" then
+		if nlLatched.Text ~= nlFakeName then nlLatched.Text = nlFakeName end
+	else
+		if nlLatched.Value ~= nlFakeName then nlLatched.Value = nlFakeName end
+	end
+end
+
+-- Hooks property-changed on a specific object; safe to call multiple times
+local function nlRelatch(obj, latchType)
+	nlLatched   = obj
+	nlLatchType = latchType
+	if nlLockConn then nlLockConn:Disconnect() end
+	local prop = latchType == "Text" and "Text" or "Value"
+	nlLockConn = obj:GetPropertyChangedSignal(prop):Connect(function()
+		if nlIsLocked then nlEnforce() end
+	end)
+	nlEnforce()
+end
+
+-- Scans workspace + PlayerGui for an object still showing nlRealInput
+local function nlScanAndRelatch()
+	for _, root in ipairs({ workspace, player.PlayerGui }) do
+		for _, obj in ipairs(root:GetDescendants()) do
+			if (obj:IsA("TextLabel") or obj:IsA("TextBox")) and obj.Text == nlRealInput then
+				nlRelatch(obj, "Text"); return
+			elseif obj:IsA("StringValue") and obj.Value == nlRealInput then
+				nlRelatch(obj, "Value"); return
+			end
+		end
+	end
+end
+
+local function nlAttach(fakeName)
+	nlFakeName = fakeName
+
+	-- Hook the current target
+	nlRelatch(nlLatched, nlLatchType)
+
+	-- Heartbeat: enforce every 0.5 s (property-changed signal handles instant re-lock);
+	-- if target dies, re-scan every 0.5 s
+	if nlWatchConn then nlWatchConn:Disconnect() end
+	local scanTimer    = 0
+	local enforceTimer = 0
+	nlWatchConn = RunService.Heartbeat:Connect(function(dt)
+		if not nlIsLocked then return end
+		if nlLatched and nlLatched.Parent then
+			enforceTimer = enforceTimer + dt
+			if enforceTimer >= 0.5 then
+				enforceTimer = 0
+				nlEnforce()
+			end
+		else
+			scanTimer = scanTimer - dt
+			if scanTimer <= 0 then
+				nlScanAndRelatch()
+				scanTimer = 0.5
+			end
+		end
+	end)
+
+	-- DescendantAdded watchers — fire the moment a matching object is created
+	for _, c in ipairs(nlAddedConns) do c:Disconnect() end
+	nlAddedConns = {}
+	local function onAdded(obj)
+		if not nlIsLocked then return end
+		if nlLatched and nlLatched.Parent then return end
+		if (obj:IsA("TextLabel") or obj:IsA("TextBox")) and obj.Text == nlRealInput then
+			nlRelatch(obj, "Text")
+		elseif obj:IsA("StringValue") and obj.Value == nlRealInput then
+			nlRelatch(obj, "Value")
+		end
+	end
+	table.insert(nlAddedConns, workspace.DescendantAdded:Connect(onAdded))
+	table.insert(nlAddedConns, player.PlayerGui.DescendantAdded:Connect(onAdded))
+
+	nlIsLocked = true
+	WindUI:Notify({ Title = "Obzervable Hub", Content = "Locked: " .. nlLatched.Name, Duration = 3, Icon = "flame" })
+end
+
+local function nlFindAndLatch(realName, fakeName)
+	for _, root in ipairs({ workspace, player.PlayerGui }) do
+		for _, obj in ipairs(root:GetDescendants()) do
+			if (obj:IsA("TextLabel") or obj:IsA("TextBox")) and obj.Text == realName then
+				nlLatched = obj; nlLatchType = "Text"; break
+			elseif obj:IsA("StringValue") and obj.Value == realName then
+				nlLatched = obj; nlLatchType = "Value"; break
+			end
+		end
+		if nlLatched then break end
+	end
+	if nlLatched then nlEnforce(); nlAttach(fakeName); return true end
+	return false
+end
+
+-- Start watching even before the object exists — nlAttach's DescendantAdded
+-- handles re-latching once found, so this just seeds the state
+local function nlStartWatching(realName, fakeName)
+	nlFakeName  = fakeName
+	nlIsLocked  = true
+	for _, c in ipairs(nlAddedConns) do c:Disconnect() end
+	nlAddedConns = {}
+	local function onAdded(obj)
+		if not nlIsLocked then return end
+		if nlLatched and nlLatched.Parent then return end
+		if (obj:IsA("TextLabel") or obj:IsA("TextBox")) and obj.Text == realName then
+			nlLatched = obj; nlLatchType = "Text"
+		elseif obj:IsA("StringValue") and obj.Value == realName then
+			nlLatched = obj; nlLatchType = "Value"
+		end
+		if nlLatched then nlAttach(fakeName) end
+	end
+	table.insert(nlAddedConns, workspace.DescendantAdded:Connect(onAdded))
+	table.insert(nlAddedConns, player.PlayerGui.DescendantAdded:Connect(onAdded))
+end
+
+Tabs.Namelock:Input({ Title = "Real Username", Desc = "The exact name shown in-game", Placeholder = "e.g. PlayerName123", Callback = function(v) nlRealInput = v end })
+Tabs.Namelock:Input({ Title = "Fake Name", Desc = "What you want it to show instead", Placeholder = "e.g. Anonymous", Callback = function(v) nlFakeInput = v end })
+Tabs.Namelock:Button({ Title = "Lock Name", Desc = "Searches and latches — watches if not found yet",
+	Callback = function()
+		if nlIsLocked then WindUI:Notify({ Title = "Obzervable Hub", Content = "Already locked", Duration = 3 }); return end
+		if nlRealInput == "" or nlFakeInput == "" then WindUI:Notify({ Title = "Obzervable Hub", Content = "Fill both fields first", Duration = 3, Icon = "flame" }); return end
+		local found = nlFindAndLatch(nlRealInput, nlFakeInput)
+		if not found then
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Watching for it...", Duration = 3, Icon = "flame" })
+			nlStartWatching(nlRealInput, nlFakeInput)
+		end
+	end,
+})
+Tabs.Namelock:Button({ Title = "Unlock",
+	Callback = function()
+		if nlLockConn  then nlLockConn:Disconnect()  end
+		if nlWatchConn then nlWatchConn:Disconnect() end
+		for _, c in ipairs(nlAddedConns) do c:Disconnect() end
+		nlAddedConns = {}
+		nlLatched = nil; nlLatchType = nil; nlIsLocked = false; nlFakeName = ""
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Name lock released", Duration = 2 })
+	end,
+})
+Tabs.Namelock:Section({ Title = "Banners" })
+for _, banner in ipairs(BANNERS) do
+	Tabs.Namelock:Button({
+		Title = banner.name,
+		Callback = function()
+			applyBanner(banner.id)
+			WindUI:Notify({ Title = "Obzervable Hub", Content = "Banner: " .. banner.name, Duration = 2 })
+		end,
+	})
+end
+Tabs.Namelock:Button({
+	Title = "Clear Banner", Desc = "Removes your current banner",
+	Callback = function()
+		removeBanner()
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Banner cleared", Duration = 2, Icon = "flame" })
+	end,
+})
+
+Tabs.Settings:Section({ Title = "Config" })
+Tabs.Settings:Button({
+	Title = "Save Config", Desc = "Save all current settings to file",
+	Callback = function()
+		cfg:Save()
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Settings saved", Duration = 2, Icon = "flame" })
+	end,
+})
+Tabs.Settings:Button({
+	Title = "Reset Config", Desc = "Wipe saved settings — reload to apply",
+	Callback = function()
+		WindUI:Notify({ Title = "Obzervable Hub", Content = "Config reset — reload to apply", Duration = 3, Icon = "flame" })
+	end,
+})
+
+UIS.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.UserInputType == Enum.UserInputType.MouseButton2 then pullVecHeld = true end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then magsHeld = true end
+	if input.UserInputType == Enum.UserInputType.Gamepad1 then
+		if input.KeyCode == ctrlPullVec then pullVecHeld = true end
+		if input.KeyCode == ctrlMags    then magsHeld    = true end
+	end
+	if pullVecEnabled and pullVecKey ~= Enum.KeyCode.Unknown and input.KeyCode == pullVecKey then
+		pullVecHeld = true
+	end
+	if magsKey ~= Enum.KeyCode.Unknown and input.KeyCode == magsKey then
+		magsHeld = true
+	end
+end)
+
+UIS.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton2 then pullVecHeld = false end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then magsHeld = false end
+	if input.UserInputType == Enum.UserInputType.Gamepad1 then
+		if input.KeyCode == ctrlPullVec then pullVecHeld = false end
+		if input.KeyCode == ctrlMags    then magsHeld    = false end
+	end
+	if pullVecKey ~= Enum.KeyCode.Unknown and input.KeyCode == pullVecKey then pullVecHeld = false end
+	if magsKey    ~= Enum.KeyCode.Unknown and input.KeyCode == magsKey    then magsHeld    = false end
+end)
+
+UIS.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.UserInputType == Enum.UserInputType.Keyboard then
+		if input.KeyCode == boostKey and hrp then
+			hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, boostPower, hrp.AssemblyLinearVelocity.Z)
+		elseif input.KeyCode == followKey then
+			toggleFollow()
+		elseif stickyHeadKey ~= Enum.KeyCode.Unknown and input.KeyCode == stickyHeadKey then
+			stickyHeadEnabled = not stickyHeadEnabled
+			if not stickyHeadEnabled then removeAllStickyZones() end
+			if stickyHeadNotifs then
+				WindUI:Notify({ Title = "Obzervable Hub", Content = stickyHeadEnabled and "Sticky Head on" or "Sticky Head off", Duration = 2, Icon = "flame" })
+			end
+		end
+	end
+	if input.UserInputType == Enum.UserInputType.Gamepad1 then
+		if input.KeyCode == ctrlBoost and hrp then
+			hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, boostPower, hrp.AssemblyLinearVelocity.Z)
+		elseif input.KeyCode == ctrlRocket then
+			rocketBoost()
+		elseif input.KeyCode == ctrlFollow then
+			toggleFollow()
+		elseif input.KeyCode == ctrlStickyHead then
+			stickyHeadEnabled = not stickyHeadEnabled
+			if not stickyHeadEnabled then removeAllStickyZones() end
+			if stickyHeadNotifs then
+				WindUI:Notify({ Title = "Obzervable Hub", Content = stickyHeadEnabled and "Sticky Head on" or "Sticky Head off", Duration = 2, Icon = "flame" })
+			end
+		end
+	end
+end)
+
+WindUI:Notify({
+	Title = "Obzervable Hub", Content = "Loaded  —  Universe Football",
+	Duration = 4,
+})
